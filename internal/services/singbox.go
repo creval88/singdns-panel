@@ -442,8 +442,12 @@ func (s *SingBoxService) Upgrade() error {
 	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
 		return err
 	}
-	if _, err := utils.Run(10*time.Second, "sudo", s.cfg.BinPath, "version"); err != nil {
-		return err
+	// 优先直接执行版本检查，避免依赖 sudoers 额外放行 /usr/local/bin/sing-box version
+	if _, err := utils.Run(10*time.Second, s.cfg.BinPath, "version"); err != nil {
+		// 兼容旧环境：若二进制权限异常，再尝试 sudo
+		if _, err2 := utils.Run(10*time.Second, "sudo", s.cfg.BinPath, "version"); err2 != nil {
+			return err
+		}
 	}
 	return nil
 }

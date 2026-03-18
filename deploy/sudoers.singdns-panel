@@ -9,6 +9,7 @@ panel ALL=(root) NOPASSWD: /bin/systemctl restart mosdns
 panel ALL=(root) NOPASSWD: /usr/bin/journalctl -u sing-box *
 panel ALL=(root) NOPASSWD: /usr/bin/journalctl -u mosdns *
 panel ALL=(root) NOPASSWD: /usr/local/bin/sbctl.sh *
+panel ALL=(root) NOPASSWD: /usr/bin/install -m 755 /tmp/sing-box-bin-* /usr/local/bin/sing-box
 panel ALL=(root) NOPASSWD: /usr/local/bin/mdctl.sh *
 panel ALL=(root) NOPASSWD: /usr/bin/crontab -l
 panel ALL=(root) NOPASSWD: /usr/bin/crontab -

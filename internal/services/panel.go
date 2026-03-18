@@ -208,11 +208,16 @@ func (p *PanelService) upgradeFromRelease(rel *PanelReleaseInfo) error {
 	if err := run("sudo", "mkdir", "-p", cfgDir); err != nil {
 		return err
 	}
-	if err := run("sudo", "touch", filepath.Join(cfgDir, "subscription-history.log"), filepath.Join(cfgDir, "subscription-updates.log")); err != nil {
+	// 订阅日志统一落盘到 /etc/sing-box，避免 app/configs 与 /etc/sing-box 双路径不一致
+	if err := run("sudo", "mkdir", "-p", "/etc/sing-box"); err != nil {
 		return err
 	}
-	runIgnore("sudo", "chown", "panel:panel", filepath.Join(cfgDir, "subscription-history.log"), filepath.Join(cfgDir, "subscription-updates.log"))
-	runIgnore("sudo", "chmod", "644", filepath.Join(cfgDir, "subscription-history.log"), filepath.Join(cfgDir, "subscription-updates.log"))
+	if err := run("sudo", "install", "-o", "panel", "-g", "panel", "-m", "664", "/dev/null", "/etc/sing-box/subscription-history.log"); err != nil {
+		return err
+	}
+	if err := run("sudo", "install", "-o", "panel", "-g", "panel", "-m", "664", "/dev/null", "/etc/sing-box/subscription-updates.log"); err != nil {
+		return err
+	}
 
 	if err := run("sudo", "systemctl", "daemon-reload"); err != nil {
 		return err

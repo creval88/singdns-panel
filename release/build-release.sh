@@ -85,13 +85,13 @@ else
   exit 1
 fi
 
-# 订阅历史文件（避免页面无记录）
-touch "$APP_DIR/configs/subscription-history.log"
-touch "$APP_DIR/configs/subscription-updates.log"
+# 订阅日志文件（统一落盘到 /etc/sing-box，避免页面无记录）
+mkdir -p /etc/sing-box
+install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-history.log
+install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-updates.log
 
 chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BIN_PATH"
 chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
-chmod 644 "$APP_DIR/configs/subscription-history.log" "$APP_DIR/configs/subscription-updates.log"
 
 systemctl daemon-reload
 systemctl enable --now "$APP_NAME"
@@ -131,11 +131,10 @@ else
   exit 1
 fi
 
-# 订阅历史文件兜底
-mkdir -p "$APP_DIR/configs"
-touch "$APP_DIR/configs/subscription-history.log" "$APP_DIR/configs/subscription-updates.log"
-chown "$RUN_USER:$RUN_USER" "$APP_DIR/configs/subscription-history.log" "$APP_DIR/configs/subscription-updates.log" 2>/dev/null || true
-chmod 644 "$APP_DIR/configs/subscription-history.log" "$APP_DIR/configs/subscription-updates.log" 2>/dev/null || true
+# 订阅日志文件兜底（统一落盘到 /etc/sing-box）
+mkdir -p /etc/sing-box
+install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-history.log
+install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-updates.log
 
 systemctl daemon-reload
 
