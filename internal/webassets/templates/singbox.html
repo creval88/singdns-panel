@@ -318,7 +318,7 @@ function applyOverview(data, opts) {
   renderDraftDiff();
 }
 async function refreshSingboxOverview(opts) {
-  const r = await fetch('/api/singbox/overview');
+  const r = await fetch('/api/singbox/overview?_=' + Date.now(), { cache: 'no-store' });
   const j = await r.json();
   applyOverview(j, opts);
 }

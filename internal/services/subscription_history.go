@@ -26,11 +26,19 @@ type SubscriptionUpdateEvent struct {
 }
 
 func (s *SingBoxService) subscriptionHistoryPath() string {
-	return filepath.Join(filepath.Dir(s.cfg.ConfigPath), "subscription-history.log")
+	baseDir := filepath.Dir(strings.TrimSpace(s.cfg.ConfigPath))
+	if p := strings.TrimSpace(s.panelConfigPath); p != "" {
+		baseDir = filepath.Dir(p)
+	}
+	return filepath.Join(baseDir, "subscription-history.log")
 }
 
 func (s *SingBoxService) subscriptionUpdateLogPath() string {
-	return filepath.Join(filepath.Dir(s.cfg.ConfigPath), "subscription-updates.log")
+	baseDir := filepath.Dir(strings.TrimSpace(s.cfg.ConfigPath))
+	if p := strings.TrimSpace(s.panelConfigPath); p != "" {
+		baseDir = filepath.Dir(p)
+	}
+	return filepath.Join(baseDir, "subscription-updates.log")
 }
 
 func (s *SingBoxService) AppendSubscriptionHistory(rawURL string) {

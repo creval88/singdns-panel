@@ -426,8 +426,13 @@ func (s *SingBoxService) Upgrade() error {
 
 	// 平滑停启
 	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
-	if _, err := utils.Run(20*time.Second, "sudo", "install", "-m", "755", binPath, s.cfg.BinPath); err != nil {
-		return err
+	_, _ = utils.Run(10*time.Second, "sudo", "mkdir", "-p", filepath.Dir(s.cfg.BinPath))
+	if res, err := utils.Run(30*time.Second, "sudo", "install", "-m", "755", binPath, s.cfg.BinPath); err != nil {
+		msg := strings.TrimSpace(res.Stderr)
+		if msg == "" {
+			msg = strings.TrimSpace(res.Stdout)
+		}
+		return fmt.Errorf("安装新内核失败（目标 %s）: %v, detail=%s", s.cfg.BinPath, err, msg)
 	}
 	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
 		return err
