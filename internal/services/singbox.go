@@ -428,6 +428,11 @@ func (s *SingBoxService) Upgrade() error {
 	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
 	_, _ = utils.Run(10*time.Second, "sudo", "mkdir", "-p", filepath.Dir(s.cfg.BinPath))
 	if res, err := utils.Run(30*time.Second, "sudo", "install", "-m", "755", binPath, s.cfg.BinPath); err != nil {
+		if s.cfg.CtlPath != "" {
+			if _, ctlErr := utils.Run(120*time.Second, "sudo", s.cfg.CtlPath, "upgrade"); ctlErr == nil {
+				return nil
+			}
+		}
 		msg := strings.TrimSpace(res.Stderr)
 		if msg == "" {
 			msg = strings.TrimSpace(res.Stdout)
