@@ -1,0 +1,14 @@
+[Unit]
+Description=SingDNS Panel
+After=network.target
+
+[Service]
+User=panel
+Group=panel
+WorkingDirectory=/opt/singdns-panel
+ExecStart=/opt/singdns-panel/singdns-panel
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

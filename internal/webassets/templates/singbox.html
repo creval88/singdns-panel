@@ -1,0 +1,343 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="layout">{{template "sidebar" .}}<main class="content">{{template "page_header" .}}
+<div class="tabbar" id="singbox-tabs">
+  <button class="tab active" onclick="showSbTab('overview',this)">概览</button>
+  <button class="tab" onclick="showSbTab('subscription',this)">订阅</button>
+  <button class="tab" onclick="showSbTab('nodes',this)">节点</button>
+  <button class="tab" onclick="showSbTab('backup',this)">备份</button>
+  <button class="tab" onclick="showSbTab('config',this)">配置</button>
+  <button class="tab" onclick="showSbTab('upgrade',this)">升级</button>
+</div>
+
+<section class="sb-tab active" data-tab="overview">
+  <div class="grid two-fixed">
+    <div class="stacked-sections">
+      {{template "singbox_status_card" .}}
+      <section class="card">
+        <div class="card-title-row"><h3>服务控制</h3><span class="badge">Control</span></div>
+        <div class="actions action-row-fixed">
+          <button onclick="runSingboxAction('start')">启动</button>
+          <button onclick="runSingboxAction('restart')">重启</button>
+          <button class="warn" onclick="confirmStopSingbox()">停止</button>
+        </div>
+        <div class="divider"></div>
+        <div class="card-title-row"><h3>启动项控制</h3><span class="badge">Boot</span></div>
+        <div class="status-list kv-list">
+          <div><b>开机自启</b><span id="sb-enabled-inline">{{if .Status.Enabled}}已开启{{else}}已关闭{{end}}</span></div>
+        </div>
+        <div class="actions action-row-fixed">
+          {{if .Status.Enabled}}
+          <button class="ghost" id="sb-enable-toggle" onclick="runSingboxAction('disable')">关闭自启</button>
+          {{else}}
+          <button class="ghost" id="sb-enable-toggle" onclick="runSingboxAction('enable')">开启自启</button>
+          {{end}}
+        </div>
+      </section>
+    </div>
+    <div class="stacked-sections">
+      {{template "singbox_version_card" .}}
+      {{template "singbox_cron_card" .}}
+    </div>
+  </div>
+</section>
+
+<section class="sb-tab" data-tab="subscription">{{template "singbox_subscription_card" .}}</section>
+<section class="sb-tab" data-tab="nodes">{{template "singbox_clash_card" .}}</section>
+<section class="sb-tab" data-tab="backup">{{template "singbox_backup_card" .}}</section>
+<section class="sb-tab" data-tab="config">{{template "singbox_editor_card" .}}</section>
+<section class="sb-tab" data-tab="upgrade">{{template "singbox_version_card" .}}</section>
+
+<script src="/static/app.js"></script>
+<script>
+const draftKey = 'singdns-panel:singbox:draft';
+let lastServerConfig = document.getElementById('config') ? document.getElementById('config').value : '';
+let serverChangedWhileDirty = false;
+
+function showSbTab(name, btn) {
+  document.querySelectorAll('.sb-tab').forEach(x => x.classList.toggle('active', x.dataset.tab === name));
+  document.querySelectorAll('#singbox-tabs .tab').forEach(x => x.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+function statusText(status) {
+  if (status === 'ok') return '成功';
+  if (status === 'error') return '失败';
+  return status || '未执行';
+}
+function getConfigEl() {
+  return document.getElementById('config');
+}
+function getCurrentDraft() {
+  const el = getConfigEl();
+  return el ? el.value : '';
+}
+function isDirtyDraft() {
+  return getCurrentDraft() !== lastServerConfig;
+}
+function persistLocalDraft() {
+  try {
+    const draft = getCurrentDraft();
+    if (!draft || draft === lastServerConfig) {
+      localStorage.removeItem(draftKey);
+      return;
+    }
+    localStorage.setItem(draftKey, draft);
+  } catch (_) {}
+}
+function restoreLocalDraft() {
+  const el = getConfigEl();
+  if (!el) return;
+  try {
+    const saved = localStorage.getItem(draftKey);
+    if (saved && saved !== lastServerConfig) {
+      el.value = saved;
+      toast('已恢复浏览器本地草稿');
+    }
+  } catch (_) {}
+}
+function resetLocalDraft() {
+  const el = getConfigEl();
+  if (!el) return;
+  if (!confirm('确认丢弃浏览器本地草稿并恢复到服务器当前配置？')) return;
+  el.value = lastServerConfig;
+  serverChangedWhileDirty = false;
+  persistLocalDraft();
+  updateConfigDirtyState();
+  renderDraftDiff();
+  toast('已丢弃本地草稿');
+}
+function updateConfigDirtyState() {
+  const dirtyBox = document.getElementById('config-dirty-state');
+  const conflictBox = document.getElementById('config-conflict-state');
+  if (dirtyBox) {
+    const dirty = isDirtyDraft();
+    dirtyBox.textContent = dirty ? '本地草稿未保存' : '已与服务器同步';
+    dirtyBox.className = dirty ? 'warn-text' : 'ok';
+  }
+  if (conflictBox) {
+    if (serverChangedWhileDirty) {
+      conflictBox.textContent = '检测到服务器配置已变化，本地草稿可能覆盖远端新改动';
+      conflictBox.className = 'bad';
+    } else {
+      conflictBox.textContent = '无';
+      conflictBox.className = '';
+    }
+  }
+  persistLocalDraft();
+}
+function buildDiffLines(a, b) {
+  const left = String(a || '').replace(/\r/g, '').split('\n');
+  const right = String(b || '').replace(/\r/g, '').split('\n');
+  const max = Math.max(left.length, right.length);
+  const lines = [];
+  let changed = 0;
+  for (let i = 0; i < max; i++) {
+    const l = left[i];
+    const r = right[i];
+    if (l === r) continue;
+    changed++;
+    if (typeof l !== 'undefined') lines.push('- ' + l);
+    if (typeof r !== 'undefined') lines.push('+ ' + r);
+    if (lines.length >= 160) break;
+  }
+  return { changed, text: lines.length ? lines.join('\n') : '暂无差异' };
+}
+function renderDraftDiff() {
+  const summary = document.getElementById('config-diff-summary');
+  const preview = document.getElementById('config-diff-preview');
+  const hint = document.getElementById('config-diff-hint');
+  if (!summary || !preview || !hint) return;
+  const diff = buildDiffLines(lastServerConfig, getCurrentDraft());
+  if (diff.changed === 0) {
+    summary.textContent = '无差异';
+    summary.className = 'muted';
+    hint.textContent = serverChangedWhileDirty ? '服务器配置已变化，但当前编辑器内容已经与服务器同步。' : '这里显示浏览器本地草稿与服务器当前配置的差异预览。';
+    preview.textContent = '暂无差异';
+    return;
+  }
+  summary.textContent = '共 ' + diff.changed + ' 处差异' + (diff.changed > 160 ? '（已截断）' : '');
+  summary.className = serverChangedWhileDirty ? 'bad' : 'warn-text';
+  hint.textContent = serverChangedWhileDirty ? '冲突提示：服务器配置在你编辑期间变了。保存前先确认右侧 diff。' : '仅本地草稿有改动，尚未保存到服务器。';
+  preview.textContent = diff.text;
+}
+function formatConfig() {
+  try {
+    const el = getConfigEl();
+    const v = JSON.parse(el.value);
+    el.value = JSON.stringify(v, null, 2);
+    updateConfigDirtyState();
+    renderDraftDiff();
+    toast('JSON 已格式化');
+  } catch (e) {
+    toast('JSON 格式错误，无法格式化', false);
+  }
+}
+function syncConfigFromServer() {
+  const el = getConfigEl();
+  if (!el) return;
+  if (isDirtyDraft() && !confirm('本地草稿有未保存修改，确认用服务器版本覆盖？')) return;
+  refreshSingboxOverview({keepEditor:false, preferServer:true});
+  toast('已从服务器同步配置');
+}
+function confirmStopSingbox() {
+  if (confirm('确认停止 Sing-box？停止后代理转发会中断。')) runSingboxAction('stop');
+}
+function confirmUpdateSub() {
+  if (confirm('确认立即更新订阅？\n\n将执行：下载新配置 → 校验 → 自动备份当前配置 → 覆盖配置 → 重启 Sing-box。')) updateSubscription();
+}
+async function runSingboxAction(action) { const j = await api('/api/singbox/action/' + action); if (j.ok) await refreshSingboxOverview(); }
+async function saveSub() { const j = await postJSON('/api/singbox/subscription', {url: document.getElementById('suburl').value}); if (j.ok) await refreshSingboxOverview(); }
+async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview({keepEditor:true}); return j; }
+async function validateConfig() { await postJSON('/api/singbox/config/validate', {config: getCurrentDraft()}); }
+async function saveConfig(restart) {
+  const current = getCurrentDraft();
+  if (serverChangedWhileDirty && !confirm('检测到服务器配置已变化。继续保存会以当前草稿覆盖服务器版本。确认继续？')) return;
+  const j = await postJSON('/api/singbox/config/save', {config: current, restart});
+  if (j.ok) {
+    serverChangedWhileDirty = false;
+    try { localStorage.removeItem(draftKey); } catch (_) {}
+    await refreshSingboxOverview({keepEditor:true, forceConfig:current});
+  }
+}
+async function createBackup() { const j = await postJSON('/api/singbox/backups/create'); if (j.ok) await refreshSingboxOverview({keepEditor:true}); }
+async function upgradeCore() {
+  if (confirm('当前版本：{{js .Version}}\n最新版本：{{js .LatestVersion}}\n\n确认更新 Sing-box 核心？')) {
+    const j = await postJSON('/api/singbox/upgrade');
+    if (j.ok) await refreshSingboxOverview();
+  }
+}
+async function saveCron() { const days = Number(document.getElementById('cron-days').value || 0); const hour = Number(document.getElementById('cron-hour').value || 0); const j = await postJSON('/api/singbox/cron', {days, hour}); if (j.ok) await refreshSingboxOverview(); }
+async function deleteCron() { if (!confirm('确认删除定时更新任务？')) return; const j = await fetchDelete('/api/singbox/cron'); if (j.ok) await refreshSingboxOverview(); }
+async function previewBackupDiff(name) {
+  const r = await fetch('/api/singbox/backups/diff?name=' + encodeURIComponent(name));
+  const j = await r.json();
+  document.getElementById('backup-diff-hint').textContent = '当前预览：' + name;
+  document.getElementById('backup-diff-preview').textContent = j.ok ? (j.diff || '无差异') : ('获取差异失败：' + (j.error || 'unknown'));
+  if (!j.ok) toast('获取差异失败', false);
+}
+async function restoreBackup(name) {
+  const r = await fetch('/api/singbox/backups/diff?name=' + encodeURIComponent(name));
+  const j0 = await r.json();
+  const tip = (j0 && j0.diff) ? ('\n\n差异预览：\n' + String(j0.diff).slice(0, 500)) : '';
+  if (!confirm('确认回滚到备份：' + name + ' ?\n\n回滚会重新写入配置并重启 Sing-box。' + tip)) return;
+  const j = await postJSON('/api/singbox/backups/restore', {name});
+  if (j.ok) await refreshSingboxOverview();
+}
+async function deleteBackup(name) {
+  if (!confirm('确认删除备份：' + name + ' ？此操作不可恢复。')) return;
+  const j = await postJSON('/api/singbox/backups/delete', {name});
+  if (j.ok) await refreshSingboxOverview({keepEditor:true});
+}
+function loadClashFrame(){
+  const wrap=document.getElementById('clash-frame-wrap');
+  if(!wrap || wrap.dataset.loaded==='1') return;
+  wrap.dataset.loaded='1';
+  wrap.innerHTML='<iframe class="mosdns-frame" src="{{.ClashAPI.URL}}"></iframe>';
+}
+function renderHistory(list) {
+  const el = document.getElementById('subscription-history-list');
+  document.getElementById('sub-history-count').textContent = (list || []).length;
+  if (!list || !list.length) { el.innerHTML = '<div class="muted empty-text">暂无订阅历史</div>'; return; }
+  el.innerHTML = list.slice(0, 8).map(x => `<div class="backup-item backup-item-compact"><div><div class="backup-name">${escapeHTML(x.url || '')}</div><div class="muted">${escapeHTML(x.time || '')}</div></div></div>`).join('');
+}
+function renderUpdateEvents(list) {
+  const el = document.getElementById('subscription-update-list');
+  document.getElementById('sub-update-count').textContent = (list || []).length;
+  if (!list || !list.length) { el.innerHTML = '<div class="muted empty-text">暂无更新执行记录</div>'; return; }
+  el.innerHTML = list.map(x => `<div class="backup-item backup-item-compact event-item event-${escapeHTML(x.status || 'info')}"><div><div class="backup-name">${escapeHTML(x.action || 'update')} · ${escapeHTML(x.message || '-')}</div><div class="muted">${escapeHTML(x.time || '')}${x.url ? ' · ' + escapeHTML(x.url) : ''}</div></div><span class="badge badge-plain ${(x.status === 'ok') ? 'badge-ok' : 'badge-bad'}">${escapeHTML(statusText(x.status))}</span></div>`).join('');
+}
+function renderBackups(list, status) {
+  const el = document.getElementById('backup-list');
+  document.getElementById('backup-count').textContent = (list || []).length;
+  document.getElementById('backup-latest-name').textContent = (status && status.latest_name) || '暂无';
+  document.getElementById('backup-latest-time').textContent = (status && status.latest_mod_time) || '-';
+  document.getElementById('backup-current-match').textContent = (status && status.current_matches_name) || '无完全匹配';
+  if (!list || !list.length) { el.innerHTML = '<div class="muted empty-text">暂无备份</div>'; return; }
+  el.innerHTML = list.map(x => `<div class="backup-item ${x.is_latest ? 'backup-item-latest' : ''} ${x.is_current ? 'backup-item-current' : ''}"><div><div class="backup-name">${escapeHTML(x.name || '')}</div><div class="muted">${escapeHTML(x.mod_time || '')} · ${escapeHTML(x.size_text || '')} · ${escapeHTML(x.age_text || '')}${x.is_latest ? ' · 最新' : ''}${x.is_current ? ' · 与当前配置一致' : ''}</div></div><div class="actions toolbar-slim"><button class="ghost" onclick="previewBackupDiff('${escapeJS(x.name || '')}')">查看差异</button><button onclick="restoreBackup('${escapeJS(x.name || '')}')">回滚</button><button class="warn" onclick="deleteBackup('${escapeJS(x.name || '')}')">删除</button></div></div>`).join('');
+}
+function applyOverview(data, opts) {
+  opts = opts || {};
+  if (data.status) {
+    document.getElementById('sb-name').textContent = data.status.name || '';
+    document.getElementById('sb-active').innerHTML = data.status.active ? '<span class="ok">运行中</span>' : '<span class="bad">已停止</span>';
+    document.getElementById('sb-enabled').textContent = data.status.enabled ? '开启' : '关闭';
+    document.getElementById('sb-active-state').textContent = data.status.active_state || '';
+    document.getElementById('sb-sub-state').textContent = data.status.sub_state || '';
+    document.getElementById('sb-summary').textContent = data.status.summary || '';
+    document.getElementById('sb-enabled-inline').textContent = data.status.enabled ? '已开启' : '已关闭';
+    const toggleBtn = document.getElementById('sb-enable-toggle');
+    if (toggleBtn) {
+      toggleBtn.textContent = data.status.enabled ? '关闭自启' : '开启自启';
+      toggleBtn.setAttribute('onclick', data.status.enabled ? "runSingboxAction('disable')" : "runSingboxAction('enable')");
+    }
+  }
+  document.getElementById('sb-updated-at').textContent = data.updatedAt || '';
+  document.getElementById('config-updated-at').textContent = data.updatedAt || '';
+  document.getElementById('suburl').value = data.url || '';
+  document.getElementById('sb-version').textContent = data.version || '';
+  document.getElementById('sb-latest-version').textContent = data.latestVersion || '';
+  document.getElementById('panel-current-version').textContent = data.panelVersion || '';
+  document.getElementById('panel-release-version').textContent = (data.panelRelease && data.panelRelease.version) || '未发现';
+  document.getElementById('sub-configured').textContent = (data.subscription && data.subscription.configured) ? '已配置' : '未配置';
+  document.getElementById('sub-host').textContent = (data.subscription && data.subscription.host) || '-';
+  document.getElementById('sub-last-update-time').textContent = (data.subscription && data.subscription.last_update_time) || '尚无记录';
+  const updateStatus = (data.subscription && data.subscription.last_update_status) || '';
+  const updateStatusEl = document.getElementById('sub-last-update-status');
+  updateStatusEl.textContent = statusText(updateStatus);
+  updateStatusEl.className = updateStatus === 'ok' ? 'ok' : (updateStatus ? 'bad' : '');
+  document.getElementById('sub-last-update-action').textContent = (data.subscription && data.subscription.last_update_action) || '-';
+  document.getElementById('sub-last-update-message').textContent = (data.subscription && data.subscription.last_update_message) || '保存订阅不会改配置，只有“立即更新订阅”才会下载并应用。';
+  if (data.panelRelease && data.panelRelease.path) {
+    document.getElementById('panel-upgrade-note').textContent = '检测到本地升级包：' + data.panelRelease.path;
+  } else {
+    document.getElementById('panel-upgrade-note').textContent = '将发布包解压到配置的 updates 目录后，可在此检测与执行升级。';
+  }
+  if (data.cron) {
+    document.getElementById('cron-enabled').innerHTML = data.cron.enabled ? '<span class="ok">已开启</span>' : '<span class="bad">未开启</span>';
+    document.getElementById('cron-summary').textContent = data.cron.summary || '';
+  }
+  if (data.configStatus) {
+    document.getElementById('config-json-valid').innerHTML = data.configStatus.server_json_valid ? '<span class="ok">有效</span>' : '<span class="bad">无效</span>';
+    document.getElementById('config-server-size').textContent = `${data.configStatus.server_bytes || 0} bytes / ${data.configStatus.server_lines || 0} lines`;
+  }
+  renderHistory(data.history || []);
+  renderUpdateEvents(data.updateEvents || []);
+  renderBackups(data.backups || [], data.backupStatus || null);
+  const incomingServerConfig = data.config || '';
+  if (!opts.keepEditor || opts.preferServer) {
+    document.getElementById('config').value = (typeof opts.forceConfig === 'string') ? opts.forceConfig : incomingServerConfig;
+  }
+  if (incomingServerConfig !== lastServerConfig && isDirtyDraft()) {
+    serverChangedWhileDirty = true;
+  }
+  if (typeof opts.forceConfig === 'string') {
+    lastServerConfig = opts.forceConfig;
+  } else if (!opts.keepEditor || opts.preferServer || !isDirtyDraft()) {
+    lastServerConfig = incomingServerConfig;
+    if (!isDirtyDraft()) serverChangedWhileDirty = false;
+  }
+  updateConfigDirtyState();
+  renderDraftDiff();
+}
+async function refreshSingboxOverview(opts) {
+  const r = await fetch('/api/singbox/overview');
+  const j = await r.json();
+  applyOverview(j, opts);
+}
+function startManagedPolling(fn, ms){
+  let timer=null;
+  const tick=()=>{ if(!document.hidden) fn(); };
+  const reset=()=>{ if(timer) clearInterval(timer); timer=setInterval(tick, ms); };
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fn(); });
+  reset();
+}
+const configEl = document.getElementById('config');
+if (configEl) {
+  configEl.addEventListener('input', function() {
+    updateConfigDirtyState();
+    renderDraftDiff();
+  });
+}
+restoreLocalDraft();
+updateConfigDirtyState();
+renderDraftDiff();
+startManagedPolling(function(){ refreshSingboxOverview({keepEditor:true}); }, 5000);
+</script></main></div></body></html>

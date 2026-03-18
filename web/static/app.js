@@ -1,0 +1,12 @@
+function csrf(){const m=document.cookie.match(/(?:^|; )singdns_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):''}
+async function ensureCsrf(){let t=csrf(); if(t) return t; const r=await fetch('/api/csrf'); const j=await r.json(); return j.token||''}
+function toast(msg, ok=true){let wrap=document.querySelector('.toast-wrap');if(!wrap){wrap=document.createElement('div');wrap.className='toast-wrap';document.body.appendChild(wrap)}const el=document.createElement('div');el.className='toast '+(ok?'ok':'bad');el.textContent=msg;wrap.appendChild(el);setTimeout(()=>{el.remove()},3200)}
+function setBusy(on,text='处理中...'){let el=document.querySelector('.busy-mask');if(on){if(!el){el=document.createElement('div');el.className='busy-mask';el.innerHTML='<div class="busy-box"></div>';document.body.appendChild(el)}el.querySelector('.busy-box').textContent=text;return}if(el)el.remove()}
+function showErrorDetail(msg){let el=document.querySelector('.error-detail');if(!el){el=document.createElement('div');el.className='error-detail';document.body.appendChild(el)}el.innerHTML=`<div class="error-card"><div class="card-title-row"><h3>错误详情</h3><button class="ghost" onclick="this.closest('.error-detail').remove()">关闭</button></div><pre>${msg||''}</pre></div>`}
+async function request(url, opts={}){const token=await ensureCsrf();setBusy(true,opts.busyText||'处理中...');try{const r=await fetch(url,{...opts,headers:{'Content-Type':'application/json','X-CSRF-Token':token,...(opts.headers||{})}});const j=await r.json();toast(j.ok?(j.message||'操作成功'):('操作失败: '+(j.error||'unknown')),j.ok);if(!j.ok)showErrorDetail(j.error||'unknown');return j}catch(e){toast('请求失败: '+e.message,false);showErrorDetail(e.stack||e.message);return {ok:false,error:e.message}}finally{setBusy(false)}}
+async function api(url, method='POST'){return request(url,{method})}
+async function postJSON(url,data){return request(url,{method:'POST',body:JSON.stringify(data)})}
+async function fetchDelete(url){return request(url,{method:'DELETE'})}
+function escapeHTML(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]||c))}
+function escapeJS(s){return String(s).replace(/['"\\]/g,'\\$&')}
+

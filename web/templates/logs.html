@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="layout">{{template "sidebar" .}}<main class="content">{{template "page_header" .}}
+<div class="card">
+  <div class="actions logs-toolbar">
+    <input id="log-filter" placeholder="搜索日志关键词">
+    <select id="log-lines"><option value="100">100 行</option><option value="200">200 行</option><option value="500">500 行</option><option value="1000">1000 行</option></select>
+    <label class="muted"><input id="auto-refresh" type="checkbox" checked style="width:auto"> 自动刷新</label>
+    <label class="muted"><input id="auto-scroll" type="checkbox" checked style="width:auto"> 自动滚动到底部</label>
+    <button onclick="refreshLogs()">刷新</button>
+  </div>
+  <div class="stats-grid compact-stats">
+    <div class="stat-card"><div class="stat-label">Sing-box</div><div class="stat-sub">行数 <span id="sb-lines">-</span> · Warn <span id="sb-warn">-</span> · Error <span id="sb-err">-</span></div></div>
+    <div class="stat-card"><div class="stat-label">MosDNS</div><div class="stat-sub">行数 <span id="md-lines">-</span> · Warn <span id="md-warn">-</span> · Error <span id="md-err">-</span></div></div>
+    <div class="stat-card"><div class="stat-label">刷新状态</div><div class="stat-sub">上次刷新 <span id="logs-fetched-at">-</span></div></div>
+  </div>
+</div>
+<div class="grid two">
+  <section class="card"><div class="card-title-row"><h3>Sing-box 日志</h3><div class="actions toolbar-slim"><button class="ghost" onclick="copyLogs('sb-logs')">复制</button></div></div><pre id="sb-logs" class="logs">{{.SingBoxLogs}}</pre></section>
+  <section class="card"><div class="card-title-row"><h3>MosDNS 日志</h3><div class="actions toolbar-slim"><button class="ghost" onclick="copyLogs('md-logs')">复制</button></div></div><pre id="md-logs" class="logs">{{.MosDNSLogs}}</pre></section>
+</div>
+<script src="/static/app.js"></script>
+<script>
+function colorize(text){return text.split('\n').map(line=>{const raw=escapeHTML(line);if(/error|fatal|failed/i.test(line))return `<span class="bad">${raw}</span>`;if(/warn/i.test(line))return `<span class="warn-text">${raw}</span>`;return raw}).join('\n')}
+function applyFilter(text){const q=(document.getElementById('log-filter').value||'').toLowerCase();let lines=text.split('\n');if(q)lines=lines.filter(x=>x.toLowerCase().includes(q));return colorize(lines.join('\n'))}
+function scrollIfNeeded(el){if(document.getElementById('auto-scroll').checked)el.scrollTop=el.scrollHeight}
+function updateSummary(prefix,data){document.getElementById(prefix+'-lines').textContent=data.lineCount||0;document.getElementById(prefix+'-warn').textContent=data.warnCount||0;document.getElementById(prefix+'-err').textContent=data.errorCount||0}
+async function refreshLogs(){const lines=Number(document.getElementById('log-lines').value||100);const [a,b]=await Promise.all([fetch('/api/logs/singbox?lines='+lines),fetch('/api/logs/mosdns?lines='+lines)]);const sa=await a.json();const sb=await b.json();const sbel=document.getElementById('sb-logs');const mdel=document.getElementById('md-logs');sbel.innerHTML=applyFilter(sa.logs||'');mdel.innerHTML=applyFilter(sb.logs||'');scrollIfNeeded(sbel);scrollIfNeeded(mdel);updateSummary('sb',sa);updateSummary('md',sb);document.getElementById('logs-fetched-at').textContent=sa.fetchedAt||sb.fetchedAt||'-'}
+function copyLogs(id){navigator.clipboard.writeText(document.getElementById(id).innerText||'').then(()=>toast('日志已复制')).catch(()=>toast('复制失败',false))}
+document.getElementById('log-filter').addEventListener('input',refreshLogs);document.getElementById('log-lines').addEventListener('change',refreshLogs);function startManagedPolling(fn,ms){let t=setInterval(()=>{if(!document.hidden && document.getElementById('auto-refresh').checked)fn()},ms);document.addEventListener('visibilitychange',()=>{if(!document.hidden && document.getElementById('auto-refresh').checked)fn()});return t}startManagedPolling(refreshLogs,5000);refreshLogs()
+</script></main></div></body></html>

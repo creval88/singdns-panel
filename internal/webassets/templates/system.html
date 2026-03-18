@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="layout">
+  {{template "sidebar" .}}
+  <main class="content">
+    {{template "page_header" .}}
+    
+    <div class="grid two-fixed">
+      <div class="stacked-sections">
+        <section class="card">
+          <div class="card-title-row"><h3>面板自升级</h3><span class="badge">Panel</span></div>
+          <div class="status-list kv-list">
+            <div><b>当前面板版本</b><span id="panel-current-version">{{.PanelVersion}}</span></div>
+            <div><b>本地升级候选</b><span id="panel-release-version">{{if .PanelRelease}}{{.PanelRelease.Version}}{{else}}未发现{{end}}</span></div>
+          </div>
+          
+          <div class="divider"></div>
+          <div class="card-title-row"><h3>远程一键自更新</h3><span class="badge">Remote</span></div>
+          <div style="margin-bottom: 12px">
+            <label class="field-label" for="remote-upgrade-url">远程包 URL（可选，留空则使用配置的更新源自动解析）</label>
+            <input id="remote-upgrade-url" placeholder="留空=自动检查 beta/stable 更新源；也可手填 https://...tar.gz" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
+          </div>
+          <div class="actions">
+            <button class="warn" onclick="upgradePanelRemote()">一键在线升级</button>
+            <button class="ghost" onclick="checkPanelRelease()">检查更新</button>
+            <button class="ghost" onclick="upgradePanel()">执行本地包升级</button>
+          </div>
+          <div class="section-note" id="panel-upgrade-note">{{if .PanelRelease}}检测到本地升级包目录：{{.PanelRelease.Path}}{{else}}将发布包解压到配置的 updates 目录后，可在此检测与执行升级。{{end}}</div>
+        </section>
+      </div>
+      
+      <div class="stacked-sections">
+        <section class="card">
+          <div class="card-title-row"><h3>修改登录密码</h3><span class="badge">Security</span></div>
+          <div class="status-list kv-list">
+            <div><b>登录账号</b><span>当前已登录</span></div>
+          </div>
+          <div style="margin-bottom: 12px; margin-top: 12px;">
+            <label class="field-label" for="old-pwd">当前密码</label>
+            <input id="old-pwd" type="password" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc; margin-bottom: 8px;">
+            <label class="field-label" for="new-pwd">新密码 (最少6位)</label>
+            <input id="new-pwd" type="password" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
+          </div>
+          <div class="actions">
+            <button onclick="changePassword()">确认修改</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-title-row"><h3>系统环境信息</h3><span class="badge">Env</span></div>
+          <div class="status-list kv-list">
+            <div><b>运行架构</b><span>{{.Arch}}</span></div>
+            <div><b>监听端口</b><span>{{.Listen}}</span></div>
+          </div>
+          <div class="section-note">系统相关设置和功能将会在这里呈现。</div>
+        </section>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+    <script>
+      async function changePassword() {
+        const oldPwd = document.getElementById('old-pwd').value;
+        const newPwd = document.getElementById('new-pwd').value;
+        if (!oldPwd || !newPwd) { toast('密码不能为空', false); return; }
+        if (newPwd.length < 6) { toast('新密码至少6位', false); return; }
+        const j = await postJSON('/api/auth/password', {old_password: oldPwd, new_password: newPwd});
+        if (j.ok) {
+          toast('密码修改成功，请重新登录！', true);
+          setTimeout(() => { window.location.href = '/login'; }, 1500);
+        }
+      }
+      async function checkPanelRelease() {
+        const r = await fetch('/api/panel/version');
+        const j = await r.json();
+        document.getElementById('panel-current-version').textContent = j.currentVersion || '';
+        document.getElementById('panel-release-version').textContent = (j.remote && j.remote.version) || (j.release && j.release.version) || j.latestVersion || '未发现';
+
+        let note = j.message || '';
+        if (j.remote && j.remote.url) {
+          note += ` · 远程(${j.remote.channel}/${j.remote.arch})`;
+        }
+        if (j.release && j.release.path) {
+          note += ` · 本地包目录: ${j.release.path}`;
+        }
+        document.getElementById('panel-upgrade-note').textContent = note;
+      }
+      async function upgradePanel() {
+        if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
+        await postJSON('/api/panel/upgrade', {});
+      }
+      async function upgradePanelRemote() {
+        const url = document.getElementById('remote-upgrade-url').value.trim();
+        const tip = url
+          ? '面板将从你填写的链接下载升级包并覆盖自身，升级期间页面将断开。确认继续？'
+          : '面板将自动从配置的更新源检查并下载最新包，升级期间页面将断开。确认继续？';
+        if (!confirm(tip)) return;
+
+        setBusy(true, '正在下载并升级，请耐心等待...');
+
+        try {
+          // silent: true 避免在服务重启瞬间弹红错
+          await request('/api/panel/upgrade/remote', {
+            method:'POST',
+            body:JSON.stringify(url ? {url} : {}),
+            silent:true
+          });
+        } catch(e) {
+          // 服务重启过程中网络中断属正常
+        }
+
+        toast('已触发升级，正在等待服务重启...', true);
+
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const r = await fetch('/api/csrf', {method: 'HEAD'});
+            if (r.ok) {
+              toast('升级成功！页面即将刷新...', true);
+              setTimeout(() => window.location.reload(), 1500);
+              setBusy(false);
+              return;
+            }
+          } catch(e) {
+            console.log('等待服务启动...', i+1);
+          }
+        }
+
+        toast('服务可能已升级，请手动刷新页面', true);
+        setBusy(false);
+      }
+    </script>
+  </main>
+</div>
+</body>
+</html>

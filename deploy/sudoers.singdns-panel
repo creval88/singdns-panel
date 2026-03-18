@@ -1,0 +1,16 @@
+panel ALL=(root) NOPASSWD: /bin/systemctl start sing-box
+panel ALL=(root) NOPASSWD: /bin/systemctl stop sing-box
+panel ALL=(root) NOPASSWD: /bin/systemctl restart sing-box
+panel ALL=(root) NOPASSWD: /bin/systemctl enable sing-box
+panel ALL=(root) NOPASSWD: /bin/systemctl disable sing-box
+panel ALL=(root) NOPASSWD: /bin/systemctl start mosdns
+panel ALL=(root) NOPASSWD: /bin/systemctl stop mosdns
+panel ALL=(root) NOPASSWD: /bin/systemctl restart mosdns
+panel ALL=(root) NOPASSWD: /usr/bin/journalctl -u sing-box *
+panel ALL=(root) NOPASSWD: /usr/bin/journalctl -u mosdns *
+panel ALL=(root) NOPASSWD: /usr/local/bin/sbctl.sh *
+panel ALL=(root) NOPASSWD: /usr/local/bin/mdctl.sh *
+panel ALL=(root) NOPASSWD: /usr/bin/crontab -l
+panel ALL=(root) NOPASSWD: /usr/bin/crontab -
+panel ALL=(root) NOPASSWD: /usr/bin/crontab -r
+panel ALL=(root) NOPASSWD: /bin/bash /opt/singdns-panel/updates/*/upgrade.sh

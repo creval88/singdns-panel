@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    .login-body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      padding: 20px;
+    }
+    .login-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 40px 32px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .login-card h1 {
+      color: #e2e8f0;
+      font-size: 28px;
+      font-weight: 700;
+      text-align: center;
+      margin: 0 0 8px 0;
+    }
+    .login-card p {
+      color: #94a3b8;
+      text-align: center;
+      margin: 0 0 32px 0;
+      font-size: 14px;
+    }
+    .login-card label {
+      display: block;
+      color: #e2e8f0;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+    .login-card input {
+      width: 100%;
+      padding: 14px 16px;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #0f172a;
+      color: #f1f5f9;
+      font-size: 15px;
+      margin-bottom: 20px;
+      box-sizing: border-box;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .login-card input:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+    .login-card button {
+      width: 100%;
+      padding: 14px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .login-card button:hover {
+      background: #2563eb;
+    }
+    .login-card button:active {
+      transform: scale(0.98);
+    }
+    .login-card .error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      text-align: center;
+    }
+    .login-footer {
+      text-align: center;
+      margin-top: 24px;
+      color: #64748b;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body class="login-body">
+  <form class="login-card" method="post" action="/login">
+    <h1>SingDNS Panel</h1>
+    <p>管理 sing-box / MosDNS 节点</p>
+    
+    {{if .Error}}
+    <div class="error">{{.Error}}</div>
+    {{end}}
+    
+    <label>用户名</label>
+    <input name="username" required autocomplete="username">
+    
+    <label>密码</label>
+    <input name="password" type="password" required autocomplete="current-password">
+    
+    <button type="submit">登 录</button>
+    
+    <div class="login-footer">
+      sing-box · MosDNS · DNS
+    </div>
+  </form>
+</body>
+</html>

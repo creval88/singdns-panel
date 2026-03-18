@@ -1,0 +1,26 @@
+{{define "sidebar"}}
+<aside class="sidebar">
+  <div>
+    <div class="brand">🐈‍⬛ SingDNS</div>
+    <div class="subtitle">{{or .SidebarSubtitle "sing-box / mosdns 控制台"}}</div>
+  </div>
+  <nav class="nav">
+    <a class="{{if eq .ActiveNav "dashboard"}}active{{end}}" href="/">仪表盘</a>
+    <a class="{{if eq .ActiveNav "singbox"}}active{{end}}" href="/singbox">Sing-box</a>
+    <a class="{{if eq .ActiveNav "mosdns"}}active{{end}}" href="/mosdns">MosDNS</a>
+    <a class="{{if eq .ActiveNav "logs"}}active{{end}}" href="/logs">日志</a>
+    <a class="{{if eq .ActiveNav "audit"}}active{{end}}" href="/audit">审计</a>
+  </nav>
+  <form method="post" action="/logout"><button class="ghost">退出登录</button></form>
+</aside>
+{{end}}
+
+{{define "page_header"}}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">{{or .Eyebrow "Panel"}}</div>
+    <h1>{{.PageTitle}}</h1>
+  </div>
+  {{if .HeaderHint}}<div class="muted">{{.HeaderHint}}</div>{{end}}
+</div>
+{{end}}

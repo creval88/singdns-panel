@@ -1,0 +1,13 @@
+{
+  "channel": "beta",
+  "amd64": {
+    "version": "20260318-beta1",
+    "url": "https://github.com/creval88/singdns-panel/releases/download/v20260318-beta1/singdns-panel-20260318-beta1-amd64.tar.gz",
+    "sha256": "<amd64 sha256>"
+  },
+  "arm64": {
+    "version": "20260318-beta1",
+    "url": "https://github.com/creval88/singdns-panel/releases/download/v20260318-beta1/singdns-panel-20260318-beta1-arm64.tar.gz",
+    "sha256": "<arm64 sha256>"
+  }
+}

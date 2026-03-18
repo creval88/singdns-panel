@@ -1,0 +1,200 @@
+{{define "singbox_status_card"}}
+<section class="card">
+  <div class="card-title-row"><h3>运行状态</h3><span class="badge">实时</span></div>
+  <div class="status-list kv-list">
+    <div><b>服务名称</b><span id="sb-name">{{.Status.Name}}</span></div>
+    <div><b>当前状态</b><span id="sb-active">{{if .Status.Active}}<span class="ok">运行中</span>{{else}}<span class="bad">已停止</span>{{end}}</span></div>
+    <div><b>开机自启</b><span id="sb-enabled">{{if .Status.Enabled}}开启{{else}}关闭{{end}}</span></div>
+    <div><b>ActiveState</b><span id="sb-active-state">{{.Status.ActiveState}}</span></div>
+    <div><b>SubState</b><span id="sb-sub-state">{{.Status.SubState}}</span></div>
+    <div><b>说明</b><span id="sb-summary">{{.Status.Summary}}</span></div>
+  </div>
+</section>
+{{end}}
+
+{{define "singbox_subscription_card"}}
+<section class="grid two singbox-work-grid">
+  <section class="card">
+    <div class="card-title-row"><h3>订阅源与执行状态</h3><span class="badge">配置源</span></div>
+    <div class="info-strip-grid">
+      <div class="info-pill"><span class="muted">订阅状态</span><b id="sub-configured">{{if .Subscription.Configured}}已配置{{else}}未配置{{end}}</b></div>
+      <div class="info-pill"><span class="muted">来源主机</span><b id="sub-host">{{or .Subscription.Host "-"}}</b></div>
+      <div class="info-pill"><span class="muted">最近更新</span><b id="sub-last-update-time">{{or .Subscription.LastUpdateTime "尚无记录"}}</b></div>
+      <div class="info-pill"><span class="muted">最近结果</span><b id="sub-last-update-status" class="{{if eq .Subscription.LastUpdateStatus "ok"}}ok{{else if .Subscription.LastUpdateStatus}}bad{{end}}">{{if eq .Subscription.LastUpdateStatus "ok"}}成功{{else if .Subscription.LastUpdateStatus}}{{.Subscription.LastUpdateStatus}}{{else}}未执行{{end}}</b></div>
+    </div>
+    <label class="field-label" for="suburl">订阅链接</label>
+    <input id="suburl" value="{{.URL}}" placeholder="https://...">
+    <div class="status-list kv-list compact-kv">
+      <div><b>当前配置更新时间</b><span id="sb-updated-at">{{.UpdatedAt}}</span></div>
+      <div><b>最近动作</b><span id="sub-last-update-action">{{or .Subscription.LastUpdateAction "-"}}</span></div>
+      <div><b>结果说明</b><span id="sub-last-update-message">{{or .Subscription.LastUpdateMessage "保存订阅不会改配置，只有“立即更新订阅”才会下载并应用。"}}</span></div>
+    </div>
+    <div class="section-note">执行“立即更新订阅”时：下载 → 校验 → 自动备份当前配置 → 写入 → 重启。失败不会静默吞掉，会写入下方历史。</div>
+    <div class="actions">
+      <button onclick="saveSub()">保存订阅</button>
+      <button onclick="confirmUpdateSub()">立即更新订阅</button>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-title-row"><h3>订阅历史与反馈</h3><span class="badge">History</span></div>
+    <div class="mini-split-head">
+      <div>
+        <div class="section-title tight">保存过的订阅 URL</div>
+        <div class="section-note">记录来源变更，方便核对"是不是换过订阅"。</div>
+      </div>
+      <div class="history-meta"><span class="muted">共</span> <b id="sub-history-count">{{.Subscription.HistoryCount}}</b></div>
+    </div>
+    <div class="backup-list" id="subscription-history-list">
+      {{range .History}}
+      <div class="backup-item backup-item-compact"><div><div class="backup-name">{{.URL}}</div><div class="muted">{{.Time}}</div></div></div>
+      {{else}}<div class="muted empty-text">暂无订阅历史</div>{{end}}
+    </div>
+    <div class="divider"></div>
+    <div class="mini-split-head">
+      <div>
+        <div class="section-title tight">更新执行记录</div>
+        <div class="section-note">这里看"刚才为什么成功/失败"，不用猜。</div>
+      </div>
+      <div class="history-meta"><span class="muted">共</span> <b id="sub-update-count">{{.Subscription.UpdateCount}}</b></div>
+    </div>
+    <div class="backup-list" id="subscription-update-list">
+      {{range .UpdateEvents}}
+      <div class="backup-item backup-item-compact event-item event-{{.Status}}">
+        <div>
+          <div class="backup-name">{{.Action}} · {{or .Message "-"}}</div>
+          <div class="muted">{{.Time}}{{if .URL}} · {{.URL}}{{end}}</div>
+        </div>
+        <span class="badge badge-plain {{if eq .Status "ok"}}badge-ok{{else}}badge-bad{{end}}">{{.Status}}</span>
+      </div>
+      {{else}}<div class="muted empty-text">暂无更新执行记录</div>{{end}}
+    </div>
+  </section>
+</section>
+{{end}}
+
+{{define "singbox_version_card"}}
+<section class="card">
+  <div class="card-title-row"><h3>版本与升级</h3><span class="badge">Core</span></div>
+  <div class="status-list kv-list">
+    <div><b>Sing-box 当前版本</b><pre id="sb-version">{{.Version}}</pre></div>
+    <div><b>Sing-box 最新版本</b><span id="sb-latest-version">{{.LatestVersion}}</span></div>
+  </div>
+  <div class="actions">
+    <button onclick="upgradeCore()">更新 Sing-box 核心</button>
+  </div>
+  <div class="section-note">注意：面板自身的升级已被移动到左侧菜单的“系统设置”页面。</div>
+</section>
+{{end}}
+
+{{define "singbox_cron_card"}}
+<section class="card">
+  <div class="card-title-row"><h3>定时订阅更新</h3><span class="badge">自动化</span></div>
+  <div class="status-list kv-list">
+    <div><b>当前状态</b><span id="cron-enabled">{{if .Cron.Enabled}}<span class="ok">已开启</span>{{else}}<span class="bad">未开启</span>{{end}}</span></div>
+    <div><b>任务信息</b><span id="cron-summary">{{.Cron.Summary}}</span></div>
+    {{if .Cron.NextRun}}<div><b>下次执行</b><span id="cron-next-run" class="ok">{{.Cron.NextRun}}</span></div>{{end}}
+  </div>
+  <div class="cron-form">
+    <input id="cron-days" type="number" min="1" max="30" placeholder="每隔几天，例如 1 / 2 / 7" value="{{.Cron.Days}}">
+    <input id="cron-hour" type="number" min="0" max="23" placeholder="几点执行，例如 3" value="{{.Cron.Hour}}">
+  </div>
+  <div class="actions">
+    <button onclick="saveCron()">保存定时任务</button>
+    <button class="ghost" onclick="deleteCron()">删除定时任务</button>
+  </div>
+</section>
+{{end}}
+
+{{define "singbox_backup_card"}}
+<section class="grid two singbox-work-grid">
+  <section class="card">
+    <div class="card-title-row"><h3>备份管理</h3><span class="badge">回滚</span></div>
+    <div class="info-strip-grid">
+      <div class="info-pill"><span class="muted">总数</span><b id="backup-count">{{len .Backups}}</b></div>
+      <div class="info-pill"><span class="muted">最新备份</span><b id="backup-latest-name">{{if .BackupStatus}}{{or .BackupStatus.LatestName "暂无"}}{{else}}暂无{{end}}</b></div>
+      <div class="info-pill"><span class="muted">当前配置匹配</span><b id="backup-current-match">{{if .BackupStatus}}{{or .BackupStatus.CurrentMatchesName "无完全匹配"}}{{else}}无完全匹配{{end}}</b></div>
+      <div class="info-pill"><span class="muted">最新时间</span><b id="backup-latest-time">{{if .BackupStatus}}{{or .BackupStatus.LatestModTime "-"}}{{else}}-{{end}}</b></div>
+    </div>
+    <div class="actions toolbar-slim">
+      <button onclick="createBackup()">手动创建备份</button>
+    </div>
+    <div class="section-note">建议顺序：先在右侧看差异，再决定是否回滚；删除放在最后，避免误操作。</div>
+    <div class="backup-list" id="backup-list">
+      {{range .Backups}}
+      <div class="backup-item {{if .IsLatest}}backup-item-latest{{end}} {{if .IsCurrent}}backup-item-current{{end}}">
+        <div>
+          <div class="backup-name">{{.Name}}</div>
+          <div class="muted">{{.ModTime}} · {{.SizeText}} · {{.AgeText}}{{if .IsLatest}} · 最新{{end}}{{if .IsCurrent}} · 与当前配置一致{{end}}</div>
+        </div>
+        <div class="actions toolbar-slim">
+          <button class="ghost" onclick="previewBackupDiff('{{.Name}}')">查看差异</button>
+          <button onclick="restoreBackup('{{.Name}}')">回滚</button>
+          <button class="warn" onclick="deleteBackup('{{.Name}}')">删除</button>
+        </div>
+      </div>
+      {{else}}<div class="muted empty-text">暂无备份</div>{{end}}
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-title-row"><h3>差异与操作说明</h3><span class="badge">只读</span></div>
+    <div class="status-list kv-list compact-kv">
+      <div><b>当前预览</b><span id="backup-diff-hint">点击左侧"查看差异"后在这里预览当前配置与备份的变化。</span></div>
+      <div><b>回滚影响</b><span>会先按当前逻辑重新保存配置并保留新的安全备份，然后重启 Sing-box。</span></div>
+      <div><b>删除建议</b><span>确定不再需要某份历史时再删，尤其不要边看边删。</span></div>
+    </div>
+    <pre id="backup-diff-preview" class="logs compact-log">点击上方"查看差异"后在这里预览</pre>
+  </section>
+</section>
+{{end}}
+
+{{define "singbox_clash_card"}}
+<section class="card iframe-card">
+  <div class="card-title-row"><h3>节点切换面板</h3><span class="badge">Clash API</span></div>
+  {{if .ClashAPI.Enabled}}
+  <div class="muted">端口：{{.ClashAPI.Port}} {{if .ClashAPI.Secret}}· secret 已从配置自动读取{{end}}</div>
+  <div class="actions"><a class="btn-link ghost" href="{{.ClashAPI.URL}}" target="_blank">新窗口打开</a><button onclick="loadClashFrame()">加载节点面板</button></div>
+  <div id="clash-frame-wrap" class="lazy-frame-wrap"><div class="muted">默认不自动加载，避免页面长期转圈。需要时点上面的“加载节点面板”。</div></div>
+  {{else}}
+  <div class="muted">未检测到 clash_api / experimental.clash_api 配置，暂时无法嵌入面板。</div>
+  {{end}}
+</section>
+{{end}}
+
+{{define "singbox_editor_card"}}
+<section class="grid two singbox-work-grid">
+  <section class="card">
+    <div class="card-title-row"><h3>配置编辑器</h3><span class="badge">JSON</span></div>
+    <div class="section-note">轮询不会覆盖本地编辑。草稿会保存在浏览器本地；如果服务器配置在你编辑期间发生变化，右侧会给出冲突提示和差异预览。</div>
+    <textarea id="config" class="editor">{{.Config}}</textarea>
+    <div class="actions">
+      <button class="ghost" onclick="formatConfig()">格式化 JSON</button>
+      <button class="ghost" onclick="syncConfigFromServer()">从服务器同步</button>
+      <button class="ghost" onclick="resetLocalDraft()">丢弃本地草稿</button>
+      <button onclick="validateConfig()">校验草稿</button>
+      <button onclick="saveConfig(false)">保存配置</button>
+      <button onclick="saveConfig(true)">保存并重启</button>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-title-row"><h3>草稿 / 冲突 / 差异</h3><span class="badge">Draft</span></div>
+    <div class="status-list kv-list compact-kv">
+      <div><b>草稿状态</b><span id="config-dirty-state" class="ok">与服务器一致</span></div>
+      <div><b>本地保护</b><span id="config-draft-storage">已启用浏览器本地草稿保护</span></div>
+      <div><b>冲突提示</b><span id="config-conflict-state">无</span></div>
+      <div><b>服务器配置时间</b><span id="config-updated-at">{{.UpdatedAt}}</span></div>
+      <div><b>服务器 JSON</b><span id="config-json-valid">{{if .ConfigStatus.ServerJSONValid}}<span class="ok">有效</span>{{else}}<span class="bad">无效</span>{{end}}</span></div>
+      <div><b>服务器大小</b><span id="config-server-size">{{if .ConfigStatus}}{{.ConfigStatus.ServerBytes}} bytes / {{.ConfigStatus.ServerLines}} lines{{end}}</span></div>
+      <div><b>建议流程</b><span>改草稿 → 看右侧差异 → 校验草稿 → 保存；只有需要立即生效时再"保存并重启"。</span></div>
+    </div>
+    <div class="divider"></div>
+    <div class="mini-split-head">
+      <div>
+        <div class="section-title tight">本地草稿 vs 服务器配置</div>
+        <div class="section-note" id="config-diff-hint">这里显示浏览器本地草稿与服务器当前配置的差异预览。</div>
+      </div>
+      <div class="history-meta"><span id="config-diff-summary" class="muted">无差异</span></div>
+    </div>
+    <pre id="config-diff-preview" class="logs compact-log">暂无差异</pre>
+  </section>
+</section>
+{{end}}
