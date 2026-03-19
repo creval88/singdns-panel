@@ -77,11 +77,27 @@ func (p *PanelService) CurrentVersion() string {
 }
 
 func (p *PanelService) Configured() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return strings.TrimSpace(p.cfg.ReleaseDir) != "" || strings.TrimSpace(p.cfg.UpgradeCommand) != ""
 }
 
+func (p *PanelService) ConfigSnapshot() cfgpkg.PanelUpdateConfig {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.cfg
+}
+
+func (p *PanelService) UpdateConfig(cfg cfgpkg.PanelUpdateConfig) {
+	p.mu.Lock()
+	p.cfg = cfg
+	p.mu.Unlock()
+}
+
 func (p *PanelService) LatestLocalRelease() (*PanelReleaseInfo, error) {
+	p.mu.RLock()
 	releaseDir := strings.TrimSpace(p.cfg.ReleaseDir)
+	p.mu.RUnlock()
 	if releaseDir == "" {
 		return nil, nil
 	}
@@ -308,10 +324,13 @@ func (p *PanelService) DownloadAndExtract(downloadURL string) (*PanelReleaseInfo
 }
 
 func (p *PanelService) DownloadAndExtractWithSHA(downloadURL, expectedSHA string) (*PanelReleaseInfo, error) {
-	if strings.TrimSpace(p.cfg.ReleaseDir) == "" {
+	p.mu.RLock()
+	releaseDir := strings.TrimSpace(p.cfg.ReleaseDir)
+	p.mu.RUnlock()
+	if releaseDir == "" {
 		return nil, fmt.Errorf("未配置面板升级目录(release_dir)，无法执行远程下载")
 	}
-	if err := os.MkdirAll(p.cfg.ReleaseDir, 0755); err != nil {
+	if err := os.MkdirAll(releaseDir, 0755); err != nil {
 		return nil, fmt.Errorf("创建升级目录失败: %v", err)
 	}
 
@@ -392,7 +411,7 @@ func (p *PanelService) DownloadAndExtractWithSHA(downloadURL, expectedSHA string
 	}
 
 	dirName := fmt.Sprintf("remote_%d", time.Now().Unix())
-	targetDir := filepath.Join(p.cfg.ReleaseDir, dirName)
+	targetDir := filepath.Join(releaseDir, dirName)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return fail("创建解压目录失败: %v", err)
 	}
@@ -416,7 +435,9 @@ func (p *PanelService) DownloadAndExtractWithSHA(downloadURL, expectedSHA string
 }
 
 func (p *PanelService) writeUpgradeLog(content string) string {
+	p.mu.RLock()
 	releaseDir := strings.TrimSpace(p.cfg.ReleaseDir)
+	p.mu.RUnlock()
 	if releaseDir == "" {
 		return ""
 	}
