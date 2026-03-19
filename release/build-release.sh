@@ -124,6 +124,7 @@ BASE_DIR="/opt/singdns-panel"
 APP_DIR="$BASE_DIR/app"
 BIN_PATH="$BASE_DIR/$APP_NAME"
 SERVICE_FILE="/etc/systemd/system/$APP_NAME.service"
+SUDOERS_FILE="/etc/sudoers.d/$APP_NAME"
 RUN_USER="panel"
 
 cd "$(dirname "$0")"
@@ -133,10 +134,40 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+BACKUP_ROOT="$BASE_DIR/backups/panel-upgrade"
+TS="$(date +%Y%m%d-%H%M%S)"
+BACKUP_DIR="$BACKUP_ROOT/$TS"
+mkdir -p "$BACKUP_DIR"
+
+# 备份关键文件（用于失败回滚）
+cp -a "$BIN_PATH" "$BACKUP_DIR/singdns-panel.bak" 2>/dev/null || true
+cp -a "$SERVICE_FILE" "$BACKUP_DIR/singdns-panel.service.bak" 2>/dev/null || true
+cp -a "$SUDOERS_FILE" "$BACKUP_DIR/sudoers.singdns-panel.bak" 2>/dev/null || true
+
+rollback() {
+  echo "[rollback] 检测到升级失败，开始回滚..."
+  if [[ -f "$BACKUP_DIR/singdns-panel.bak" ]]; then
+    install -m 755 "$BACKUP_DIR/singdns-panel.bak" "$BIN_PATH" || true
+  fi
+  if [[ -f "$BACKUP_DIR/singdns-panel.service.bak" ]]; then
+    cp "$BACKUP_DIR/singdns-panel.service.bak" "$SERVICE_FILE" || true
+  fi
+  if [[ -f "$BACKUP_DIR/sudoers.singdns-panel.bak" ]]; then
+    cp "$BACKUP_DIR/sudoers.singdns-panel.bak" "$SUDOERS_FILE" || true
+    chmod 440 "$SUDOERS_FILE" || true
+    visudo -c || true
+  fi
+  systemctl daemon-reload || true
+  systemctl start "$APP_NAME" || true
+  systemctl is-active --quiet "$APP_NAME" || true
+  echo "[rollback] 已尝试恢复上一个可用版本"
+}
+trap 'rollback' ERR
+
 install -m 755 sbctl.sh /usr/local/bin/sbctl.sh
 install -m 755 mdctl.sh /usr/local/bin/mdctl.sh
-cp sudoers.singdns-panel /etc/sudoers.d/$APP_NAME
-chmod 440 /etc/sudoers.d/$APP_NAME
+cp sudoers.singdns-panel "$SUDOERS_FILE"
+chmod 440 "$SUDOERS_FILE"
 visudo -c
 cp singdns-panel.service "$SERVICE_FILE"
 mkdir -p "$BASE_DIR/updates"
@@ -170,10 +201,13 @@ fi
 systemctl start "$APP_NAME"
 systemctl is-active --quiet "$APP_NAME" || { echo "升级后服务未启动"; exit 1; }
 
+# 成功后取消错误回滚陷阱
+trap - ERR
+
 chown -R "$RUN_USER:$RUN_USER" "$BASE_DIR/updates" 2>/dev/null || true
 chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
 
-echo "升级完成"
+echo "升级完成（已备份到: $BACKUP_DIR）"
 EOF
 chmod +x "$REL_DIR/upgrade.sh"
 
