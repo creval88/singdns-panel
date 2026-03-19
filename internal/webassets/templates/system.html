@@ -92,9 +92,57 @@
         }
         document.getElementById('panel-upgrade-note').textContent = note;
       }
+      async function pollUpgradeTask(taskId) {
+        if (!taskId) return false;
+        for (let i = 0; i < 25; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const r = await fetch('/api/panel/upgrade/task?id=' + encodeURIComponent(taskId), {cache:'no-store'});
+            if (!r.ok) continue;
+            const j = await r.json();
+            const t = j.task || {};
+            if (t.status === 'running' && t.message) {
+              setBusy(true, t.message);
+            }
+            if (t.status === 'success') {
+              toast(t.message || '升级成功！页面即将刷新...', true);
+              setTimeout(() => window.location.reload(), 1200);
+              setBusy(false);
+              return true;
+            }
+            if (t.status === 'failed') {
+              toast('升级失败: ' + (t.error || t.message || 'unknown'), false);
+              showErrorDetail((t.error || t.message || 'unknown') + '\n任务ID: ' + taskId);
+              setBusy(false);
+              return true;
+            }
+          } catch(e) {
+            // 升级重启期间可能短暂断开
+          }
+        }
+        return false;
+      }
+
       async function upgradePanel() {
         if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
-        await postJSON('/api/panel/upgrade', {});
+        setBusy(true, '正在触发本地升级任务...');
+        const j = await request('/api/panel/upgrade', {
+          method:'POST',
+          body:JSON.stringify({}),
+          silent:true
+        });
+        if (!j || !j.ok) {
+          setBusy(false);
+          toast('触发升级失败', false);
+          return;
+        }
+        const taskId = j.task && j.task.id;
+        toast((j.message || '已触发升级任务') + (taskId ? (' · 任务ID: ' + taskId) : ''), true);
+        const done = await pollUpgradeTask(taskId);
+        if (!done) {
+          toast('升级任务仍在处理中，请稍后手动刷新页面', true);
+          setBusy(false);
+        }
       }
       async function upgradePanelRemote() {
         const url = document.getElementById('remote-upgrade-url').value.trim();
@@ -105,9 +153,9 @@
 
         setBusy(true, '正在下载并升级，请耐心等待...');
 
+        let j = null;
         try {
-          // silent: true 避免在服务重启瞬间弹红错
-          await request('/api/panel/upgrade/remote', {
+          j = await request('/api/panel/upgrade/remote', {
             method:'POST',
             body:JSON.stringify(url ? {url} : {}),
             silent:true
@@ -116,30 +164,20 @@
           // 服务重启过程中网络中断属正常
         }
 
-        toast('已触发升级，正在等待服务重启...', true);
-
-        for (let i = 0; i < 20; i++) {
-          await new Promise(r => setTimeout(r, 2000));
-          try {
-            const r = await fetch('/api/csrf', {
-              method: 'GET',
-              cache: 'no-store',
-              redirect: 'follow'
-            });
-            // 服务恢复后可能返回 200(JSON/HTML)、401/403；都视为“服务可达”
-            if (r.ok || r.status === 401 || r.status === 403) {
-              toast('升级成功！页面即将刷新...', true);
-              setTimeout(() => window.location.reload(), 1500);
-              setBusy(false);
-              return;
-            }
-          } catch(e) {
-            console.log('等待服务启动...', i+1);
-          }
+        if (!j || !j.ok) {
+          setBusy(false);
+          toast('触发远程升级失败', false);
+          return;
         }
 
-        toast('服务可能已升级，请手动刷新页面', true);
-        setBusy(false);
+        const taskId = j.task && j.task.id;
+        toast((j.message || '已触发升级任务') + (taskId ? (' · 任务ID: ' + taskId) : ''), true);
+
+        const done = await pollUpgradeTask(taskId);
+        if (!done) {
+          toast('升级任务仍在处理中，请稍后手动刷新页面', true);
+          setBusy(false);
+        }
       }
     </script>
   </main>

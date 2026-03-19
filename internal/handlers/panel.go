@@ -66,11 +66,37 @@ func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) PanelUpgradeTaskAPI(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if taskID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "缺少任务ID"})
+		return
+	}
+	task := a.Panel.Task(taskID)
+	if task == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "任务不存在"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "task": task})
+}
+
 func (a *App) PanelUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 	user, _ := a.Sessions.Username(r)
-	go func(username string) {
+	task := a.Panel.NewTask("local", "", "")
+	go func(username, taskID string) {
 		time.Sleep(200 * time.Millisecond)
+		a.Panel.MarkTaskRunning(taskID, "正在执行本地升级脚本")
 		err := a.Panel.Upgrade()
+		if err != nil {
+			a.Panel.MarkTaskFailed(taskID, err)
+		} else {
+			a.Panel.MarkTaskSuccess(taskID, "本地升级完成，服务已恢复")
+		}
 		if a.Audit != nil {
 			result := "ok"
 			if err != nil {
@@ -78,8 +104,14 @@ func (a *App) PanelUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			a.Audit.Log(username, "panel.upgrade", result)
 		}
-	}(user)
-	respondMessage(w, nil, "已触发面板升级任务，服务可能会短暂重启，请约 10-30 秒后刷新页面")
+	}(user, task.ID)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"message": "已触发面板升级任务，服务可能会短暂重启，请约 10-30 秒后刷新页面",
+		"task":    task,
+	})
 }
 
 func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +123,7 @@ func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 
 	downloadURL := strings.TrimSpace(in.URL)
 	expectedSHA := strings.TrimSpace(in.SHA256)
+	resolvedVersion := ""
 	if downloadURL == "" {
 		rr, err := a.Panel.ResolveRemoteRelease()
 		if err != nil {
@@ -98,6 +131,7 @@ func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		downloadURL = rr.URL
+		resolvedVersion = strings.TrimSpace(rr.Version)
 		if expectedSHA == "" {
 			expectedSHA = rr.SHA256
 		}
@@ -109,11 +143,30 @@ func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 		respondMessage(w, err, "")
 		return
 	}
+	if strings.TrimSpace(resolvedVersion) == "" {
+		resolvedVersion = strings.TrimSpace(info.Version)
+	}
 
 	user, _ := a.Sessions.Username(r)
-	go func(username string) {
+	task := a.Panel.NewTask("remote", resolvedVersion, info.Path)
+	go func(username, taskID, version string) {
 		time.Sleep(200 * time.Millisecond)
+		msg := "正在执行远程升级脚本"
+		if strings.TrimSpace(version) != "" {
+			msg = fmt.Sprintf("正在升级到 %s", strings.TrimSpace(version))
+		}
+		a.Panel.MarkTaskRunning(taskID, msg)
+
 		err := a.Panel.Upgrade()
+		if err != nil {
+			a.Panel.MarkTaskFailed(taskID, err)
+		} else {
+			successMsg := "远程升级完成，服务已恢复"
+			if strings.TrimSpace(version) != "" {
+				successMsg = fmt.Sprintf("已升级到 %s，服务已恢复", strings.TrimSpace(version))
+			}
+			a.Panel.MarkTaskSuccess(taskID, successMsg)
+		}
 		if a.Audit != nil {
 			result := "ok"
 			if err != nil {
@@ -121,8 +174,16 @@ func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			a.Audit.Log(username, "panel.remote_upgrade", result)
 		}
-	}(user)
+	}(user, task.ID, resolvedVersion)
 
-	msg := fmt.Sprintf("已成功下载 %s 版本升级包并开始后台升级，页面可能短暂断开，请约 10-30 秒后刷新。", info.Version)
-	respondMessage(w, nil, msg)
+	msg := "已成功下载升级包并开始后台升级，页面可能短暂断开，请约 10-30 秒后刷新。"
+	if strings.TrimSpace(resolvedVersion) != "" {
+		msg = fmt.Sprintf("已成功下载 %s 版本升级包并开始后台升级，页面可能短暂断开，请约 10-30 秒后刷新。", strings.TrimSpace(resolvedVersion))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"message": msg,
+		"task":    task,
+	})
 }

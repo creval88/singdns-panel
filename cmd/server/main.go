@@ -110,6 +110,7 @@ func main() {
 
 		pr.Get("/api/dashboard", app.DashboardAPI)
 		pr.Get("/api/panel/version", app.PanelVersionAPI)
+		pr.Get("/api/panel/upgrade/task", app.PanelUpgradeTaskAPI)
 		pr.Post("/api/panel/upgrade", app.PanelUpgradeAPI)
 		pr.Post("/api/panel/upgrade/remote", app.PanelRemoteUpgradeAPI)
 		pr.Post("/api/auth/password", app.ChangePasswordAPI)

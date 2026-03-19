@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	cfgpkg "singdns-panel/internal/config"
@@ -27,6 +28,9 @@ const (
 type PanelService struct {
 	version string
 	cfg     cfgpkg.PanelUpdateConfig
+
+	mu    sync.RWMutex
+	tasks map[string]*UpgradeTask
 }
 
 type PanelReleaseInfo struct {
@@ -49,8 +53,20 @@ type RemoteReleaseInfo struct {
 	ManifestURL string `json:"manifest_url"`
 }
 
+type UpgradeTask struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Status      string `json:"status"` // pending|running|success|failed
+	Message     string `json:"message"`
+	Version     string `json:"version,omitempty"`
+	ReleasePath string `json:"release_path,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
+	FinishedAt  string `json:"finished_at,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
 func NewPanelService(version string, cfg cfgpkg.PanelUpdateConfig) *PanelService {
-	return &PanelService{version: version, cfg: cfg}
+	return &PanelService{version: version, cfg: cfg, tasks: map[string]*UpgradeTask{}}
 }
 
 func (p *PanelService) CurrentVersion() string {
@@ -410,4 +426,79 @@ func (p *PanelService) writeUpgradeLog(content string) string {
 	path := filepath.Join(releaseDir, fmt.Sprintf("upgrade-%s.log", time.Now().Format("20060102-150405")))
 	_ = os.WriteFile(path, []byte(time.Now().Format(time.RFC3339)+"\n"+content+"\n"), 0644)
 	return path
+}
+
+func (p *PanelService) NewTask(kind, version, releasePath string) *UpgradeTask {
+	t := &UpgradeTask{
+		ID:          fmt.Sprintf("upg-%d", time.Now().UnixNano()),
+		Kind:        kind,
+		Status:      "pending",
+		Message:     "任务已创建",
+		Version:     strings.TrimSpace(version),
+		ReleasePath: strings.TrimSpace(releasePath),
+		StartedAt:   time.Now().Format(time.RFC3339),
+	}
+	p.mu.Lock()
+	p.tasks[t.ID] = t
+	p.mu.Unlock()
+	return cloneTask(t)
+}
+
+func (p *PanelService) Task(taskID string) *UpgradeTask {
+	p.mu.RLock()
+	t, ok := p.tasks[strings.TrimSpace(taskID)]
+	p.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return cloneTask(t)
+}
+
+func (p *PanelService) MarkTaskRunning(taskID, msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.tasks[taskID]; ok {
+		t.Status = "running"
+		if strings.TrimSpace(msg) != "" {
+			t.Message = msg
+		}
+	}
+}
+
+func (p *PanelService) MarkTaskSuccess(taskID, msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.tasks[taskID]; ok {
+		t.Status = "success"
+		if strings.TrimSpace(msg) != "" {
+			t.Message = msg
+		} else {
+			t.Message = "升级成功"
+		}
+		t.FinishedAt = time.Now().Format(time.RFC3339)
+		t.Error = ""
+	}
+}
+
+func (p *PanelService) MarkTaskFailed(taskID string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.tasks[taskID]; ok {
+		t.Status = "failed"
+		t.FinishedAt = time.Now().Format(time.RFC3339)
+		if err != nil {
+			t.Error = err.Error()
+			t.Message = "升级失败"
+		} else {
+			t.Message = "升级失败"
+		}
+	}
+}
+
+func cloneTask(t *UpgradeTask) *UpgradeTask {
+	if t == nil {
+		return nil
+	}
+	cp := *t
+	return &cp
 }
