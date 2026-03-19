@@ -21,7 +21,7 @@ import (
 
 const (
 	maxUpgradeArchiveBytes = 500 * 1024 * 1024 // 500MB
-	maxManifestBytes      = 2 * 1024 * 1024   // 2MB
+	maxManifestBytes       = 2 * 1024 * 1024   // 2MB
 )
 
 type PanelService struct {
@@ -140,93 +140,22 @@ func (p *PanelService) Upgrade() error {
 	if rel == nil {
 		return fmt.Errorf("未发现可用的本地升级包")
 	}
-	if !rel.HasBinary {
-		return fmt.Errorf("升级包不完整，需要包含 bin/singdns-panel")
+	if !rel.HasBinary || !rel.HasScript {
+		return fmt.Errorf("升级包不完整，需要包含 bin/singdns-panel 和 upgrade.sh")
 	}
 	return p.upgradeFromRelease(rel)
 }
 
 func (p *PanelService) upgradeFromRelease(rel *PanelReleaseInfo) error {
-	run := func(name string, args ...string) error {
-		if _, err := utils.Run(2*time.Minute, name, args...); err != nil {
-			return fmt.Errorf("%s %v: %w", name, args, err)
-		}
-		return nil
-	}
-	runIgnore := func(name string, args ...string) {
-		_, _ = utils.Run(30*time.Second, name, args...)
+	upgradeScript := filepath.Join(rel.Path, "upgrade.sh")
+	if _, err := os.Stat(upgradeScript); err != nil {
+		return fmt.Errorf("升级包缺少脚本: %s", upgradeScript)
 	}
 
-	baseDir := "/opt/singdns-panel"
-	appDir := filepath.Join(baseDir, "app")
-	cfgDir := filepath.Join(appDir, "configs")
-	binPath := filepath.Join(baseDir, "singdns-panel")
-	serviceFile := "/etc/systemd/system/singdns-panel.service"
-	sudoersFile := "/etc/sudoers.d/singdns-panel"
-
-	binSrc := filepath.Join(rel.Path, "bin", "singdns-panel")
-	if _, err := os.Stat(binSrc); err != nil {
-		return fmt.Errorf("升级包缺少二进制: %s", binSrc)
+	if _, err := utils.Run(5*time.Minute, "sudo", "bash", upgradeScript); err != nil {
+		return fmt.Errorf("执行升级脚本失败: %w", err)
 	}
-
-	sbctl := filepath.Join(rel.Path, "sbctl.sh")
-	mdctl := filepath.Join(rel.Path, "mdctl.sh")
-	sudoers := filepath.Join(rel.Path, "sudoers.singdns-panel")
-	svc := filepath.Join(rel.Path, "singdns-panel.service")
-
-	if _, err := os.Stat(sbctl); err == nil {
-		if err := run("sudo", "install", "-m", "755", sbctl, "/usr/local/bin/sbctl.sh"); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(mdctl); err == nil {
-		if err := run("sudo", "install", "-m", "755", mdctl, "/usr/local/bin/mdctl.sh"); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(sudoers); err == nil {
-		if err := run("sudo", "cp", sudoers, sudoersFile); err != nil {
-			return err
-		}
-		if err := run("sudo", "chmod", "440", sudoersFile); err != nil {
-			return err
-		}
-		if _, err := utils.Run(20*time.Second, "sudo", "visudo", "-c"); err != nil {
-			return fmt.Errorf("visudo 校验失败: %w", err)
-		}
-	}
-	if _, err := os.Stat(svc); err == nil {
-		if err := run("sudo", "cp", svc, serviceFile); err != nil {
-			return err
-		}
-	}
-
-	if err := run("sudo", "install", "-m", "755", binSrc, binPath); err != nil {
-		return err
-	}
-
-	if err := run("sudo", "mkdir", "-p", cfgDir); err != nil {
-		return err
-	}
-	// 订阅日志统一落盘到 /etc/sing-box，避免 app/configs 与 /etc/sing-box 双路径不一致
-	if err := run("sudo", "mkdir", "-p", "/etc/sing-box"); err != nil {
-		return err
-	}
-	if err := run("sudo", "install", "-o", "panel", "-g", "panel", "-m", "664", "/dev/null", "/etc/sing-box/subscription-history.log"); err != nil {
-		return err
-	}
-	if err := run("sudo", "install", "-o", "panel", "-g", "panel", "-m", "664", "/dev/null", "/etc/sing-box/subscription-updates.log"); err != nil {
-		return err
-	}
-
-	if err := run("sudo", "systemctl", "daemon-reload"); err != nil {
-		return err
-	}
-	runIgnore("sudo", "systemctl", "stop", "singdns-panel")
-	if err := run("sudo", "systemctl", "start", "singdns-panel"); err != nil {
-		return err
-	}
-	if _, err := utils.Run(15*time.Second, "sudo", "systemctl", "is-active", "--quiet", "singdns-panel"); err != nil {
+	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "is-active", "--quiet", "singdns-panel"); err != nil {
 		return fmt.Errorf("升级后服务未正常运行: %w", err)
 	}
 	return nil

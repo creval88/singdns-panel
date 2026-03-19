@@ -5,7 +5,17 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$ROOT_DIR/dist"
 REL_DIR="$OUT_DIR/singdns-panel-release"
 VERSION="${1:-$(date +%Y%m%d-%H%M%S)}"
-ARCH="$(uname -m)"
+ARCH_RAW="${RELEASE_ARCH:-$(uname -m)}"
+
+normalize_arch() {
+  case "$1" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+ARCH="$(normalize_arch "$ARCH_RAW")"
 
 mkdir -p "$OUT_DIR"
 rm -rf "$REL_DIR"
@@ -44,7 +54,7 @@ echo "[3/5] 编译二进制..."
 mkdir -p "$REL_DIR/bin"
 if command -v go >/dev/null 2>&1; then
   go mod tidy
-  go build -ldflags "-X main.Version=${VERSION}" -o "$REL_DIR/bin/singdns-panel" ./cmd/server
+  GOOS=linux GOARCH="$ARCH" CGO_ENABLED=0 go build -ldflags "-X main.Version=${VERSION}" -o "$REL_DIR/bin/singdns-panel" ./cmd/server
 else
   echo "警告: 当前环境没有 go，跳过编译。你需要在目标机自行编译。"
 fi
