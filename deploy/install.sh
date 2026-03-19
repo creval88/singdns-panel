@@ -53,6 +53,7 @@ Environment=SINGDNS_CONFIG=$APP_DIR/configs/panel.json
 ExecStart=$BIN_PATH
 Restart=always
 RestartSec=3
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

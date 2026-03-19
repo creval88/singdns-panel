@@ -45,6 +45,7 @@ Environment=SINGDNS_CONFIG=/opt/singdns-panel/app/configs/panel.json
 ExecStart=/opt/singdns-panel/singdns-panel
 Restart=always
 RestartSec=3
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
