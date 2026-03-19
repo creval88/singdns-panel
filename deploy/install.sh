@@ -22,7 +22,7 @@ fi
 
 SRC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 useradd -r -s /usr/sbin/nologin -d "$INSTALL_DIR" "$RUN_USER" 2>/dev/null || true
-mkdir -p "$APP_DIR"
+mkdir -p "$APP_DIR" "$INSTALL_DIR/updates"
 rsync -a --delete "$SRC_DIR/" "$APP_DIR/"
 mkdir -p "$APP_DIR/logs"
 
@@ -58,7 +58,8 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BIN_PATH"
+chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$INSTALL_DIR/updates" "$BIN_PATH"
+chmod 775 "$INSTALL_DIR/updates" 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable --now "$APP_NAME"
 

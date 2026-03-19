@@ -2,14 +2,14 @@
   "channels": {
     "beta": {
       "amd64": {
-        "version": "20260319-beta2-hotfix9",
-        "url": "https://github.com/creval88/singdns-panel/releases/download/v20260319-beta2-hotfix9/singdns-panel-20260319-beta2-hotfix9-amd64.tar.gz",
-        "sha256": "0307131fd1e66ddffc1bf09d38038eef19a9bdc8de7cd902470afc4dfe50d068"
+        "version": "20260319-beta2-hotfix10",
+        "url": "https://github.com/creval88/singdns-panel/releases/download/v20260319-beta2-hotfix10/singdns-panel-20260319-beta2-hotfix10-amd64.tar.gz",
+        "sha256": "7df50e634298580448f789ca5e4d1cf4c1a9a17c1bd54fa9d9d7674911d65229"
       },
       "arm64": {
-        "version": "20260319-beta2-hotfix9",
-        "url": "https://github.com/creval88/singdns-panel/releases/download/v20260319-beta2-hotfix9/singdns-panel-20260319-beta2-hotfix9-arm64.tar.gz",
-        "sha256": "f263dbdff9f6ba48d75c68d9dd140ec1ad76d68a0e9f86fc853d5314acfa3c11"
+        "version": "20260319-beta2-hotfix10",
+        "url": "https://github.com/creval88/singdns-panel/releases/download/v20260319-beta2-hotfix10/singdns-panel-20260319-beta2-hotfix10-arm64.tar.gz",
+        "sha256": "3b7fa10c10616368ac5ba768d8713819cb45ec2e461c38209797d5277417aba9"
       }
     },
     "stable": {

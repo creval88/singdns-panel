@@ -76,7 +76,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-mkdir -p "$APP_DIR/configs" "$APP_DIR/logs"
+mkdir -p "$APP_DIR/configs" "$APP_DIR/logs" "$BASE_DIR/updates"
 useradd -r -s /usr/sbin/nologin -d "$BASE_DIR" "$RUN_USER" 2>/dev/null || true
 
 install -m 755 sbctl.sh /usr/local/bin/sbctl.sh
@@ -100,8 +100,9 @@ mkdir -p /etc/sing-box
 install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-history.log
 install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-updates.log
 
-chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BIN_PATH"
+chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BASE_DIR/updates" "$BIN_PATH"
 chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
+chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable --now "$APP_NAME"
@@ -133,6 +134,7 @@ cp sudoers.singdns-panel /etc/sudoers.d/$APP_NAME
 chmod 440 /etc/sudoers.d/$APP_NAME
 visudo -c
 cp singdns-panel.service "$SERVICE_FILE"
+mkdir -p "$BASE_DIR/updates"
 
 if [[ -f bin/singdns-panel ]]; then
   install -m 755 bin/singdns-panel "$BIN_PATH"
@@ -155,6 +157,9 @@ fi
 
 systemctl start "$APP_NAME"
 systemctl is-active --quiet "$APP_NAME" || { echo "升级后服务未启动"; exit 1; }
+
+chown -R "$RUN_USER:$RUN_USER" "$BASE_DIR/updates" 2>/dev/null || true
+chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
 
 echo "升级完成"
 EOF
