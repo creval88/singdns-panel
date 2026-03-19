@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"singdns-panel/internal/services"
 )
@@ -66,9 +67,19 @@ func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) PanelUpgradeAPI(w http.ResponseWriter, r *http.Request) {
-	err := a.Panel.Upgrade()
-	a.auditFromRequest(r, "panel.upgrade", err)
-	respondMessage(w, err, "面板升级脚本已执行，服务可能会短暂重启")
+	user, _ := a.Sessions.Username(r)
+	go func(username string) {
+		time.Sleep(200 * time.Millisecond)
+		err := a.Panel.Upgrade()
+		if a.Audit != nil {
+			result := "ok"
+			if err != nil {
+				result = err.Error()
+			}
+			a.Audit.Log(username, "panel.upgrade", result)
+		}
+	}(user)
+	respondMessage(w, nil, "已触发面板升级任务，服务可能会短暂重启，请约 10-30 秒后刷新页面")
 }
 
 func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
@@ -99,9 +110,19 @@ func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 解压成功后直接执行升级
-	err = a.Panel.Upgrade()
-	a.auditFromRequest(r, "panel.remote_upgrade", err)
-	msg := fmt.Sprintf("已成功下载 %s 版本的升级包并触发升级脚本，服务可能会短暂重启。", info.Version)
-	respondMessage(w, err, msg)
+	user, _ := a.Sessions.Username(r)
+	go func(username string) {
+		time.Sleep(200 * time.Millisecond)
+		err := a.Panel.Upgrade()
+		if a.Audit != nil {
+			result := "ok"
+			if err != nil {
+				result = err.Error()
+			}
+			a.Audit.Log(username, "panel.remote_upgrade", result)
+		}
+	}(user)
+
+	msg := fmt.Sprintf("已成功下载 %s 版本升级包并开始后台升级，页面可能短暂断开，请约 10-30 秒后刷新。", info.Version)
+	respondMessage(w, nil, msg)
 }
