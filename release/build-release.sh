@@ -88,6 +88,10 @@ visudo -c
 
 cp -n panel.json "$APP_DIR/configs/panel.json"
 cp singdns-panel.service "$SERVICE_FILE"
+if [[ -f "$APP_DIR/configs/panel.json" ]]; then
+  chown "$RUN_USER:$RUN_USER" "$APP_DIR/configs/panel.json" 2>/dev/null || true
+  chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
+fi
 
 if [[ -f bin/singdns-panel ]]; then
   install -m 755 bin/singdns-panel "$BIN_PATH"
@@ -143,6 +147,13 @@ else
   echo "缺少预编译二进制，升级失败"
   exit 1
 fi
+
+# 修正权限（避免 panel.json 被 root 覆盖后面板无法保存配置）
+mkdir -p "$APP_DIR/configs" "$APP_DIR/logs" "$BASE_DIR/updates"
+chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BASE_DIR/updates" "$BIN_PATH" 2>/dev/null || true
+chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
+chmod 750 "$APP_DIR/configs" 2>/dev/null || true
+chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
 
 # 订阅日志文件兜底（统一落盘到 /etc/sing-box）
 mkdir -p /etc/sing-box

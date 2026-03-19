@@ -61,6 +61,8 @@ EOF
 
 chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$INSTALL_DIR/updates" "$BIN_PATH"
 chmod 775 "$INSTALL_DIR/updates" 2>/dev/null || true
+chmod 750 "$APP_DIR/configs" 2>/dev/null || true
+chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable --now "$APP_NAME"
 
