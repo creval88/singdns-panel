@@ -121,8 +121,13 @@
         for (let i = 0; i < 20; i++) {
           await new Promise(r => setTimeout(r, 2000));
           try {
-            const r = await fetch('/api/csrf', {method: 'HEAD'});
-            if (r.ok) {
+            const r = await fetch('/api/csrf', {
+              method: 'GET',
+              cache: 'no-store',
+              redirect: 'follow'
+            });
+            // 服务恢复后可能返回 200(JSON/HTML)、401/403；都视为“服务可达”
+            if (r.ok || r.status === 401 || r.status === 403) {
               toast('升级成功！页面即将刷新...', true);
               setTimeout(() => window.location.reload(), 1500);
               setBusy(false);
