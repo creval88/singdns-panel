@@ -18,18 +18,44 @@
           <div class="card-title-row"><h3>面板自升级</h3><span class="badge">Panel</span></div>
           <div class="status-list kv-list">
             <div><b>当前面板版本</b><span id="panel-current-version">{{.PanelVersion}}</span></div>
-            <div><b>本地升级候选</b><span id="panel-release-version">{{if .PanelRelease}}{{.PanelRelease.Version}}{{else}}未发现{{end}}</span></div>
+            <div><b>最新可用版本</b><span id="panel-release-version">{{if .PanelRelease}}{{.PanelRelease.Version}}{{else}}未发现{{end}}</span></div>
           </div>
           
           <div class="divider"></div>
+          <div class="card-title-row"><h3>更新源配置</h3><span class="badge">Config</span></div>
+          <div class="status-list kv-list" style="margin-bottom:10px;">
+            <div><b>更新通道</b>
+              <select id="panel-update-channel" style="min-width:140px; padding:6px 8px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;">
+                <option value="beta">beta</option>
+                <option value="stable">stable</option>
+              </select>
+            </div>
+            <div><b>系统架构</b>
+              <select id="panel-update-arch" style="min-width:140px; padding:6px 8px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;">
+                <option value="amd64">amd64</option>
+                <option value="arm64">arm64</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-bottom: 12px">
+            <label class="field-label" for="panel-update-base-url">更新清单 URL</label>
+            <input id="panel-update-base-url" placeholder="https://raw.githubusercontent.com/.../updates/latest.json" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
+          </div>
+          <div class="actions" style="margin-bottom:10px;">
+            <button class="ghost" onclick="savePanelUpdateConfig()">保存更新源配置</button>
+            <button class="ghost" onclick="probePanelRemote()">测试更新源</button>
+          </div>
+          <div class="section-note" id="panel-probe-note">保存后可先点“测试更新源”，确认 manifest、channel/arch 与下载链接都正常。</div>
+
+          <div class="divider"></div>
           <div class="card-title-row"><h3>远程一键自更新</h3><span class="badge">Remote</span></div>
           <div style="margin-bottom: 12px">
-            <label class="field-label" for="remote-upgrade-url">直链下载地址 (支持 .tar.gz 文件)</label>
-            <input id="remote-upgrade-url" placeholder="https://..." style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
+            <label class="field-label" for="remote-upgrade-url">远程包 URL（可选，留空则使用配置的更新源自动解析）</label>
+            <input id="remote-upgrade-url" placeholder="留空=自动检查 beta/stable 更新源；也可手填 https://...tar.gz" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
           </div>
           <div class="actions">
-            <button class="warn" onclick="upgradePanelRemote()">下载并升级</button>
-            <button class="ghost" onclick="checkPanelRelease()">检查本地源</button>
+            <button class="warn" onclick="upgradePanelRemote()">一键在线升级</button>
+            <button class="ghost" onclick="checkPanelRelease()">检查更新</button>
             <button class="ghost" onclick="upgradePanel()">执行本地包升级</button>
           </div>
           <div class="section-note" id="panel-upgrade-note">{{if .PanelRelease}}检测到本地升级包目录：{{.PanelRelease.Path}}{{else}}将发布包解压到配置的 updates 目录后，可在此检测与执行升级。{{end}}</div>
@@ -77,23 +103,176 @@
           setTimeout(() => { window.location.href = '/login'; }, 1500);
         }
       }
+      async function loadPanelUpdateConfig() {
+        try {
+          const r = await fetch('/api/panel/update-config', {cache:'no-store'});
+          const j = await r.json();
+          if (!j.ok || !j.config) return;
+          const c = j.config;
+          document.getElementById('panel-update-channel').value = (c.channel || 'beta').toLowerCase();
+          document.getElementById('panel-update-arch').value = (c.arch || 'amd64').toLowerCase();
+          document.getElementById('panel-update-base-url').value = c.base_url || '';
+        } catch (e) {
+          console.log('loadPanelUpdateConfig failed', e);
+        }
+      }
+
+      async function savePanelUpdateConfig() {
+        const payload = {
+          channel: document.getElementById('panel-update-channel').value,
+          arch: document.getElementById('panel-update-arch').value,
+          base_url: document.getElementById('panel-update-base-url').value.trim()
+        };
+        const j = await request('/api/panel/update-config', {
+          method:'POST',
+          body: JSON.stringify(payload)
+        });
+        if (j && j.ok) {
+          await checkPanelRelease();
+          await probePanelRemote(true);
+        }
+      }
+
+      async function probePanelRemote(silent=false) {
+        const note = document.getElementById('panel-probe-note');
+        if (note) note.textContent = '正在测试更新源...';
+        try {
+          const r = await fetch('/api/panel/probe-remote', {cache:'no-store'});
+          const j = await r.json();
+          const p = j.probe || {};
+          if (!j.ok) {
+            if (note) note.textContent = '测试失败：' + (j.error || 'unknown');
+            if (!silent) toast('测试更新源失败', false);
+            return null;
+          }
+          const parts = [];
+          if (p.manifest_url) parts.push('manifest: ' + p.manifest_url);
+          if (p.channel || p.arch) parts.push('命中: ' + (p.channel || '-') + '/' + (p.arch || '-'));
+          if (p.version) parts.push('版本: ' + p.version);
+          if (p.package_message) parts.push(p.package_message);
+          if (p.url) parts.push('下载: ' + p.url);
+          if (note) note.textContent = parts.join(' · ');
+          if (!silent) toast(p.package_ok ? '更新源测试通过' : '更新源已解析，但下载链接异常', !!p.package_ok);
+          return p;
+        } catch (e) {
+          if (note) note.textContent = '测试失败：' + e;
+          if (!silent) toast('测试更新源失败', false);
+          return null;
+        }
+      }
+
       async function checkPanelRelease() {
         const r = await fetch('/api/panel/version');
         const j = await r.json();
         document.getElementById('panel-current-version').textContent = j.currentVersion || '';
-        document.getElementById('panel-release-version').textContent = (j.release && j.release.version) || j.latestVersion || '未发现';
-        document.getElementById('panel-upgrade-note').textContent = j.message || '';
-        if (j.release && j.release.path) document.getElementById('panel-upgrade-note').textContent += ' · ' + j.release.path;
+        document.getElementById('panel-release-version').textContent = (j.remote && j.remote.version) || (j.release && j.release.version) || j.latestVersion || '未发现';
+
+        let note = j.message || '';
+        if (j.remote && j.remote.url) {
+          note += ` · 远程(${j.remote.channel}/${j.remote.arch})`;
+        }
+        if (j.release && j.release.path) {
+          note += ` · 本地包目录: ${j.release.path}`;
+        }
+        document.getElementById('panel-upgrade-note').textContent = note;
       }
+      async function pollUpgradeTask(taskId) {
+        if (!taskId) return false;
+        for (let i = 0; i < 25; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const r = await fetch('/api/panel/upgrade/task?id=' + encodeURIComponent(taskId), {cache:'no-store'});
+            if (!r.ok) continue;
+            const j = await r.json();
+            const t = j.task || {};
+            if (t.status === 'running' && t.message) {
+              setBusy(true, t.message);
+            }
+            if (t.status === 'success') {
+              toast(t.message || '升级成功！页面即将刷新...', true);
+              setTimeout(() => window.location.reload(), 1200);
+              setBusy(false);
+              return true;
+            }
+            if (t.status === 'failed') {
+              toast('升级失败: ' + (t.error || t.message || 'unknown'), false);
+              showErrorDetail((t.error || t.message || 'unknown') + '\n任务ID: ' + taskId);
+              setBusy(false);
+              return true;
+            }
+          } catch(e) {
+            // 升级重启期间可能短暂断开
+          }
+        }
+        return false;
+      }
+
+      loadPanelUpdateConfig();
+      checkPanelRelease();
+      probePanelRemote(true);
+
       async function upgradePanel() {
         if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
-        await postJSON('/api/panel/upgrade', {});
+        setBusy(true, '正在触发本地升级任务...');
+        const j = await request('/api/panel/upgrade', {
+          method:'POST',
+          body:JSON.stringify({}),
+          silent:true
+        });
+        if (!j || !j.ok) {
+          setBusy(false);
+          toast('触发升级失败', false);
+          return;
+        }
+        const taskId = j.task && j.task.id;
+        toast((j.message || '已触发升级任务') + (taskId ? (' · 任务ID: ' + taskId) : ''), true);
+        const done = await pollUpgradeTask(taskId);
+        if (!done) {
+          toast('升级任务仍在处理中，请稍后手动刷新页面', true);
+          setBusy(false);
+        }
       }
       async function upgradePanelRemote() {
-        const url = document.getElementById('remote-upgrade-url').value;
-        if (!url) { toast('请输入直链下载地址', false); return; }
-        if (!confirm('面板将会从该链接下载升级包，解压后覆盖自身。升级期间页面将断开。确认继续？')) return;
-        await postJSON('/api/panel/upgrade/remote', {url: url});
+        const url = document.getElementById('remote-upgrade-url').value.trim();
+        if (!url) {
+          const probe = await probePanelRemote(false);
+          if (!probe || !probe.package_ok) {
+            toast('更新源探测失败，请先修复配置再升级', false);
+            return;
+          }
+        }
+        const tip = url
+          ? '面板将从你填写的链接下载升级包并覆盖自身，升级期间页面将断开。确认继续？'
+          : '面板将自动从配置的更新源检查并下载最新包，升级期间页面将断开。确认继续？';
+        if (!confirm(tip)) return;
+
+        setBusy(true, '正在下载并升级，请耐心等待...');
+
+        let j = null;
+        try {
+          j = await request('/api/panel/upgrade/remote', {
+            method:'POST',
+            body:JSON.stringify(url ? {url} : {}),
+            silent:true
+          });
+        } catch(e) {
+          // 服务重启过程中网络中断属正常
+        }
+
+        if (!j || !j.ok) {
+          setBusy(false);
+          toast('触发远程升级失败', false);
+          return;
+        }
+
+        const taskId = j.task && j.task.id;
+        toast((j.message || '已触发升级任务') + (taskId ? (' · 任务ID: ' + taskId) : ''), true);
+
+        const done = await pollUpgradeTask(taskId);
+        if (!done) {
+          toast('升级任务仍在处理中，请稍后手动刷新页面', true);
+          setBusy(false);
+        }
       }
     </script>
   </main>

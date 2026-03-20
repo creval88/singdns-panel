@@ -43,7 +43,9 @@
           </div>
           <div class="actions" style="margin-bottom:10px;">
             <button class="ghost" onclick="savePanelUpdateConfig()">保存更新源配置</button>
+            <button class="ghost" onclick="probePanelRemote()">测试更新源</button>
           </div>
+          <div class="section-note" id="panel-probe-note">保存后可先点“测试更新源”，确认 manifest、channel/arch 与下载链接都正常。</div>
 
           <div class="divider"></div>
           <div class="card-title-row"><h3>远程一键自更新</h3><span class="badge">Remote</span></div>
@@ -127,6 +129,35 @@
         });
         if (j && j.ok) {
           await checkPanelRelease();
+          await probePanelRemote(true);
+        }
+      }
+
+      async function probePanelRemote(silent=false) {
+        const note = document.getElementById('panel-probe-note');
+        if (note) note.textContent = '正在测试更新源...';
+        try {
+          const r = await fetch('/api/panel/probe-remote', {cache:'no-store'});
+          const j = await r.json();
+          const p = j.probe || {};
+          if (!j.ok) {
+            if (note) note.textContent = '测试失败：' + (j.error || 'unknown');
+            if (!silent) toast('测试更新源失败', false);
+            return null;
+          }
+          const parts = [];
+          if (p.manifest_url) parts.push('manifest: ' + p.manifest_url);
+          if (p.channel || p.arch) parts.push('命中: ' + (p.channel || '-') + '/' + (p.arch || '-'));
+          if (p.version) parts.push('版本: ' + p.version);
+          if (p.package_message) parts.push(p.package_message);
+          if (p.url) parts.push('下载: ' + p.url);
+          if (note) note.textContent = parts.join(' · ');
+          if (!silent) toast(p.package_ok ? '更新源测试通过' : '更新源已解析，但下载链接异常', !!p.package_ok);
+          return p;
+        } catch (e) {
+          if (note) note.textContent = '测试失败：' + e;
+          if (!silent) toast('测试更新源失败', false);
+          return null;
         }
       }
 
@@ -178,6 +209,7 @@
 
       loadPanelUpdateConfig();
       checkPanelRelease();
+      probePanelRemote(true);
 
       async function upgradePanel() {
         if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
@@ -202,6 +234,13 @@
       }
       async function upgradePanelRemote() {
         const url = document.getElementById('remote-upgrade-url').value.trim();
+        if (!url) {
+          const probe = await probePanelRemote(false);
+          if (!probe || !probe.package_ok) {
+            toast('更新源探测失败，请先修复配置再升级', false);
+            return;
+          }
+        }
         const tip = url
           ? '面板将从你填写的链接下载升级包并覆盖自身，升级期间页面将断开。确认继续？'
           : '面板将自动从配置的更新源检查并下载最新包，升级期间页面将断开。确认继续？';
