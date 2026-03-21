@@ -171,6 +171,9 @@
         if (j.remote && j.remote.url) {
           note += ` · 远程(${j.remote.channel}/${j.remote.arch})`;
         }
+        if (j.remote_error) {
+          note += ` · 远程异常: ${j.remote_error}`;
+        }
         if (j.release && j.release.path) {
           note += ` · 本地包目录: ${j.release.path}`;
         }
