@@ -158,6 +158,9 @@ func TestPanelVersionAPI_RemoteErrorField(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d, body=%s", rr.Code, rr.Body.String())
 	}
+	if cc := rr.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Fatalf("expected Cache-Control contains no-store, got: %q", cc)
+	}
 	var out map[string]any
 	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
 		t.Fatalf("decode response: %v", err)

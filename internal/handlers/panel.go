@@ -11,6 +11,9 @@ import (
 )
 
 func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+
 	current := a.Panel.CurrentVersion()
 	release, localErr := a.Panel.LatestLocalRelease()
 	configured := a.Panel.Configured()
