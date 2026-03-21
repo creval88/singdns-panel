@@ -56,6 +56,7 @@
           <div class="actions">
             <button class="warn" onclick="upgradePanelRemote()">一键在线升级</button>
             <button class="ghost" onclick="checkPanelRelease()">检查更新</button>
+            <button class="ghost" onclick="copyPanelDiagnostics()">复制诊断信息</button>
             <button class="ghost" onclick="upgradePanel()">执行本地包升级</button>
           </div>
           <div class="section-note" id="panel-upgrade-note">{{if .PanelRelease}}检测到本地升级包目录：{{.PanelRelease.Path}}{{else}}将发布包解压到配置的 updates 目录后，可在此检测与执行升级。{{end}}</div>
@@ -178,9 +179,12 @@
         }
       }
 
+      let lastPanelVersionInfo = null;
+
       async function checkPanelRelease() {
         const r = await fetch('/api/panel/version');
         const j = await r.json();
+        lastPanelVersionInfo = j;
         document.getElementById('panel-current-version').textContent = j.currentVersion || '';
         document.getElementById('panel-release-version').textContent = (j.remote && j.remote.version) || (j.release && j.release.version) || j.latestVersion || '未发现';
 
@@ -191,11 +195,41 @@
         if (j.remote_error) {
           note += ` · 远程异常: ${j.remote_error}`;
         }
+        if (j.checked_at) {
+          note += ` · 检查时间: ${j.checked_at}`;
+        }
         if (j.release && j.release.path) {
           note += ` · 本地包目录: ${j.release.path}`;
         }
         setProbeButtonState(!!j.remote_error);
         document.getElementById('panel-upgrade-note').textContent = note;
+      }
+
+      async function copyPanelDiagnostics() {
+        try {
+          if (!lastPanelVersionInfo) {
+            await checkPanelRelease();
+          }
+          const j = lastPanelVersionInfo || {};
+          const lines = [
+            'panel.current=' + (j.currentVersion || '-'),
+            'panel.latest=' + (j.latestVersion || '-'),
+            'panel.hasUpdate=' + (!!j.hasUpdate),
+            'panel.message=' + (j.message || '-'),
+            'panel.checkedAt=' + (j.checked_at || '-'),
+            'remote.channel=' + ((j.remote && j.remote.channel) || '-'),
+            'remote.arch=' + ((j.remote && j.remote.arch) || '-'),
+            'remote.version=' + ((j.remote && j.remote.version) || '-'),
+            'remote.url=' + ((j.remote && j.remote.url) || '-'),
+            'remote.error=' + (j.remote_error || '-'),
+            'local.releasePath=' + ((j.release && j.release.path) || '-')
+          ];
+          const text = lines.join('\n');
+          await navigator.clipboard.writeText(text);
+          toast('诊断信息已复制', true);
+        } catch (e) {
+          toast('复制失败：' + e, false);
+        }
       }
       async function pollUpgradeTask(taskId) {
         if (!taskId) return false;

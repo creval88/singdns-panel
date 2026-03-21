@@ -68,6 +68,7 @@ func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
 		"release":        release,
 		"remote":         remote,
 		"remote_error":   remoteError,
+		"checked_at":     time.Now().Format(time.RFC3339),
 	})
 }
 

@@ -169,6 +169,9 @@ func TestPanelVersionAPI_RemoteErrorField(t *testing.T) {
 	if msg, _ := out["message"].(string); msg != "远程更新源不可用" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
+	if checkedAt, _ := out["checked_at"].(string); checkedAt == "" {
+		t.Fatalf("expected checked_at to be non-empty, got: %q", checkedAt)
+	}
 }
 
 func TestPanelUpdateConfigAPI_DefaultChannelBeta(t *testing.T) {
