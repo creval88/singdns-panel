@@ -43,7 +43,7 @@
           </div>
           <div class="actions" style="margin-bottom:10px;">
             <button class="ghost" onclick="savePanelUpdateConfig()">保存更新源配置</button>
-            <button class="ghost" onclick="probePanelRemote()">测试更新源</button>
+            <button id="probe-remote-btn" class="ghost" onclick="probePanelRemote()">测试更新源</button>
           </div>
           <div class="section-note" id="panel-probe-note">保存后可先点“测试更新源”，确认 manifest、channel/arch 与下载链接都正常。</div>
 
@@ -133,6 +133,20 @@
         }
       }
 
+      function setProbeButtonState(hasError) {
+        const btn = document.getElementById('probe-remote-btn');
+        if (!btn) return;
+        if (hasError) {
+          btn.classList.remove('ghost');
+          btn.classList.add('warn');
+          btn.textContent = '测试更新源（建议先修复）';
+        } else {
+          btn.classList.remove('warn');
+          btn.classList.add('ghost');
+          btn.textContent = '测试更新源';
+        }
+      }
+
       async function probePanelRemote(silent=false) {
         const note = document.getElementById('panel-probe-note');
         if (note) note.textContent = '正在测试更新源...';
@@ -142,6 +156,7 @@
           const p = j.probe || {};
           if (!j.ok) {
             if (note) note.textContent = '测试失败：' + (j.error || 'unknown');
+            setProbeButtonState(true);
             if (!silent) toast('测试更新源失败', false);
             return null;
           }
@@ -152,10 +167,12 @@
           if (p.package_message) parts.push(p.package_message);
           if (p.url) parts.push('下载: ' + p.url);
           if (note) note.textContent = parts.join(' · ');
+          setProbeButtonState(!p.package_ok);
           if (!silent) toast(p.package_ok ? '更新源测试通过' : '更新源已解析，但下载链接异常', !!p.package_ok);
           return p;
         } catch (e) {
           if (note) note.textContent = '测试失败：' + e;
+          setProbeButtonState(true);
           if (!silent) toast('测试更新源失败', false);
           return null;
         }
@@ -177,6 +194,7 @@
         if (j.release && j.release.path) {
           note += ` · 本地包目录: ${j.release.path}`;
         }
+        setProbeButtonState(!!j.remote_error);
         document.getElementById('panel-upgrade-note').textContent = note;
       }
       async function pollUpgradeTask(taskId) {

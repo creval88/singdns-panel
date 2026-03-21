@@ -91,6 +91,22 @@ func TestPanelUpdateConfigSaveAPI_InvalidChannel(t *testing.T) {
 	}
 }
 
+func TestPanelUpdateConfigSaveAPI_InvalidBaseURL(t *testing.T) {
+	app := &App{Panel: services.NewPanelService("v1.0.0", cfgpkg.PanelUpdateConfig{})}
+
+	body := strings.NewReader(`{"base_url":"ftp://example.com/latest.json"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/panel/update-config", body)
+	rr := httptest.NewRecorder()
+	app.PanelUpdateConfigSaveAPI(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "base_url 仅支持 http/https") {
+		t.Fatalf("unexpected error body: %s", rr.Body.String())
+	}
+}
+
 func TestPanelUpdateConfigSaveAPI_ValidAndPersist(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := filepath.Join(tmp, "panel.json")
@@ -152,5 +168,26 @@ func TestPanelVersionAPI_RemoteErrorField(t *testing.T) {
 	}
 	if msg, _ := out["message"].(string); msg != "远程更新源不可用" {
 		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestPanelUpdateConfigAPI_DefaultChannelBeta(t *testing.T) {
+	app := &App{Panel: services.NewPanelService("v1.0.0", cfgpkg.PanelUpdateConfig{})}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/panel/update-config", nil)
+	rr := httptest.NewRecorder()
+	app.PanelUpdateConfigAPI(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	cfg, _ := out["config"].(map[string]any)
+	ch, _ := cfg["channel"].(string)
+	if ch != "beta" {
+		t.Fatalf("expected default channel=beta, got %q", ch)
 	}
 }
