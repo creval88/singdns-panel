@@ -53,6 +53,18 @@ type RemoteReleaseInfo struct {
 	ManifestURL string `json:"manifest_url"`
 }
 
+type RemoteProbeResult struct {
+	Version        string `json:"version"`
+	URL            string `json:"url"`
+	SHA256         string `json:"sha256,omitempty"`
+	Channel        string `json:"channel"`
+	Arch           string `json:"arch"`
+	ManifestURL    string `json:"manifest_url"`
+	PackageStatus  int    `json:"package_status,omitempty"`
+	PackageOK      bool   `json:"package_ok"`
+	PackageMessage string `json:"package_message,omitempty"`
+}
+
 type UpgradeTask struct {
 	ID          string `json:"id"`
 	Kind        string `json:"kind"`
@@ -194,50 +206,109 @@ func (p *PanelService) upgradeFromRelease(rel *PanelReleaseInfo) error {
 }
 
 func (p *PanelService) ResolveRemoteRelease() (*RemoteReleaseInfo, error) {
+	pkg, _, err := p.resolveRemoteReleaseDetailed()
+	return pkg, err
+}
+
+func (p *PanelService) ProbeRemoteRelease() (*RemoteProbeResult, error) {
+	pkg, client, err := p.resolveRemoteReleaseDetailed()
+	if err != nil {
+		return nil, err
+	}
+	res := &RemoteProbeResult{
+		Version:        pkg.Version,
+		URL:            pkg.URL,
+		SHA256:         pkg.SHA256,
+		Channel:        pkg.Channel,
+		Arch:           pkg.Arch,
+		ManifestURL:    pkg.ManifestURL,
+		PackageOK:      false,
+		PackageMessage: "尚未探测下载链接",
+	}
+	if strings.TrimSpace(pkg.URL) == "" {
+		res.PackageMessage = "更新清单缺少下载 URL"
+		return res, errors.New(res.PackageMessage)
+	}
+
+	req, err := http.NewRequest(http.MethodHead, pkg.URL, nil)
+	if err != nil {
+		res.PackageMessage = fmt.Sprintf("创建探测请求失败: %v", err)
+		return res, nil
+	}
+	resp, err := client.Do(req)
+	if err != nil || resp == nil || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		req, err = http.NewRequest(http.MethodGet, pkg.URL, nil)
+		if err != nil {
+			res.PackageMessage = fmt.Sprintf("创建下载探测请求失败: %v", err)
+			return res, nil
+		}
+		req.Header.Set("Range", "bytes=0-0")
+		resp, err = client.Do(req)
+	}
+	if err != nil {
+		res.PackageMessage = fmt.Sprintf("探测下载链接失败: %v", err)
+		return res, nil
+	}
+	defer resp.Body.Close()
+	res.PackageStatus = resp.StatusCode
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		res.PackageOK = true
+		res.PackageMessage = fmt.Sprintf("下载链接可达（HTTP %d）", resp.StatusCode)
+	} else {
+		res.PackageMessage = fmt.Sprintf("下载链接不可用（HTTP %d）", resp.StatusCode)
+	}
+	return res, nil
+}
+
+func (p *PanelService) resolveRemoteReleaseDetailed() (*RemoteReleaseInfo, *http.Client, error) {
+	p.mu.RLock()
 	base := strings.TrimSpace(p.cfg.BaseURL)
+	channel := strings.TrimSpace(p.cfg.Channel)
+	arch := strings.TrimSpace(p.cfg.Arch)
+	p.mu.RUnlock()
 	if base == "" {
-		return nil, fmt.Errorf("未配置 panel_update.base_url")
+		return nil, nil, fmt.Errorf("未配置 panel_update.base_url")
 	}
 	manifestURL := base
 	if !strings.HasSuffix(strings.ToLower(base), ".json") {
 		manifestURL = strings.TrimRight(base, "/") + "/latest.json"
 	}
-
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Get(manifestURL)
-	if err != nil {
-		return nil, fmt.Errorf("获取更新清单失败: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("获取更新清单失败，HTTP状态码: %d", resp.StatusCode)
-	}
-
-	var data map[string]any
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestBytes)).Decode(&data); err != nil {
-		return nil, fmt.Errorf("解析更新清单失败: %w", err)
-	}
-
-	channel := strings.TrimSpace(p.cfg.Channel)
 	if channel == "" {
-		channel = "stable"
+		channel = "beta"
 	}
-	arch := strings.TrimSpace(p.cfg.Arch)
 	if arch == "" {
 		arch = normalizeArch(runtime.GOARCH)
 	}
 
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Get(manifestURL)
+	if err != nil {
+		return nil, client, fmt.Errorf("获取更新清单失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, client, fmt.Errorf("获取更新清单失败，HTTP状态码: %d", resp.StatusCode)
+	}
+
+	var data map[string]any
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestBytes)).Decode(&data); err != nil {
+		return nil, client, fmt.Errorf("解析更新清单失败: %w", err)
+	}
+
 	pkg := pickRemotePackage(data, channel, arch)
 	if pkg == nil {
-		return nil, fmt.Errorf("更新清单中未找到 channel=%s arch=%s 的发布包", channel, arch)
+		return nil, client, fmt.Errorf("更新清单中未找到 channel=%s arch=%s 的发布包", channel, arch)
 	}
 	if strings.TrimSpace(pkg.URL) == "" {
-		return nil, errors.New("更新清单缺少下载 URL")
+		return nil, client, errors.New("更新清单缺少下载 URL")
 	}
 	pkg.Channel = channel
 	pkg.Arch = arch
 	pkg.ManifestURL = manifestURL
-	return pkg, nil
+	return pkg, client, nil
 }
 
 func pickRemotePackage(data map[string]any, channel, arch string) *RemoteReleaseInfo {

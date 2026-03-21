@@ -23,6 +23,18 @@ mkdir -p "$REL_DIR"
 
 cd "$ROOT_DIR"
 
+echo "[0/5] 发布前敏感信息自检..."
+if find . -path './.git' -prune -o -path './dist' -prune -o -type f \( -name 'url.txt' -o -name 'panel.json' \) -print | grep -v '^./configs/panel.example.json$' | grep -q .; then
+  echo "错误: 检测到潜在运行时敏感文件，请勿打包真实配置/url.txt"
+  find . -path './.git' -prune -o -path './dist' -prune -o -type f \( -name 'url.txt' -o -name 'panel.json' \) -print | grep -v '^./configs/panel.example.json$' || true
+  exit 1
+fi
+if rg -n --hidden --glob '!dist/**' --glob '!.git/**' '(https?://).*(token|subscribe|subscription|sub=|auth=)' . >/tmp/singdns-release-sensitive-check.txt 2>/dev/null; then
+  echo "错误: 检测到疑似敏感订阅/鉴权链接，请先清理后再打包"
+  cat /tmp/singdns-release-sensitive-check.txt
+  exit 1
+fi
+
 echo "[1/5] 准备配置模板..."
 cp configs/panel.example.json "$REL_DIR/panel.json"
 

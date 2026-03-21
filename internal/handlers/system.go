@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"runtime"
 	"strings"
@@ -61,10 +62,20 @@ func (a *App) PanelUpdateConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
 		cfg.BaseURL = v
 	}
 	if v := strings.TrimSpace(in.Channel); v != "" {
-		cfg.Channel = strings.ToLower(v)
+		v = strings.ToLower(v)
+		if v != "beta" && v != "stable" {
+			respondMessage(w, fmt.Errorf("channel 仅支持 beta/stable"), "")
+			return
+		}
+		cfg.Channel = v
 	}
 	if v := strings.TrimSpace(in.Arch); v != "" {
-		cfg.Arch = normalizeArch(v)
+		v = normalizeArch(v)
+		if v != "amd64" && v != "arm64" {
+			respondMessage(w, fmt.Errorf("arch 仅支持 amd64/arm64"), "")
+			return
+		}
+		cfg.Arch = v
 	}
 
 	a.Config.PanelUpdate = cfg

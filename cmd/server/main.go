@@ -112,6 +112,7 @@ func main() {
 		pr.Get("/api/panel/version", app.PanelVersionAPI)
 		pr.Get("/api/panel/update-config", app.PanelUpdateConfigAPI)
 		pr.Post("/api/panel/update-config", app.PanelUpdateConfigSaveAPI)
+		pr.Get("/api/panel/probe-remote", app.PanelProbeRemoteAPI)
 		pr.Get("/api/panel/upgrade/task", app.PanelUpgradeTaskAPI)
 		pr.Post("/api/panel/upgrade", app.PanelUpgradeAPI)
 		pr.Post("/api/panel/upgrade/remote", app.PanelRemoteUpgradeAPI)

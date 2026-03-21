@@ -85,6 +85,17 @@ func (a *App) PanelUpgradeTaskAPI(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "task": task})
 }
 
+func (a *App) PanelProbeRemoteAPI(w http.ResponseWriter, r *http.Request) {
+	probe, err := a.Panel.ProbeRemoteRelease()
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error(), "probe": probe})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "probe": probe})
+}
+
 func (a *App) PanelUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 	user, _ := a.Sessions.Username(r)
 	task := a.Panel.NewTask("local", "", "")
