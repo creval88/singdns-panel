@@ -18,6 +18,7 @@ func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
 	hasUpdate := false
 	latestVersion := ""
 	var remote *services.RemoteReleaseInfo
+	remoteError := ""
 
 	if localErr != nil {
 		message = localErr.Error()
@@ -50,8 +51,11 @@ func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
 		} else {
 			message = "检测到远程可更新版本"
 		}
-	} else if remote == nil && localErr == nil {
-		// 保留本地消息，不覆盖
+	} else {
+		remoteError = err.Error()
+		if localErr == nil && !configured {
+			message = "远程更新源不可用"
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -63,6 +67,7 @@ func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
 		"message":        message,
 		"release":        release,
 		"remote":         remote,
+		"remote_error":   remoteError,
 	})
 }
 

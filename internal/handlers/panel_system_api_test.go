@@ -131,3 +131,26 @@ func TestPanelUpdateConfigSaveAPI_ValidAndPersist(t *testing.T) {
 		t.Fatalf("persisted config missing base_url: %s", string(b))
 	}
 }
+
+func TestPanelVersionAPI_RemoteErrorField(t *testing.T) {
+	app := &App{Panel: services.NewPanelService("v1.0.0", cfgpkg.PanelUpdateConfig{})}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/panel/version", nil)
+	rr := httptest.NewRecorder()
+	app.PanelVersionAPI(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	re, _ := out["remote_error"].(string)
+	if !strings.Contains(re, "未配置 panel_update.base_url") {
+		t.Fatalf("expected remote_error to contain base_url message, got: %q", re)
+	}
+	if msg, _ := out["message"].(string); msg != "远程更新源不可用" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
