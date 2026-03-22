@@ -23,12 +23,28 @@ dist/singdns-panel-<version>-<arch>.tar.gz
 ```
 
 ## 安装
+### 方式 A：手动传发布包安装
 把压缩包传到 Debian 后：
 
 ```bash
 tar xzf singdns-panel-<version>-<arch>.tar.gz
 cd singdns-panel-release
 sudo bash install.sh
+```
+
+### 方式 B：新设备一键安装（推荐）
+直接从 GitHub 拉取最新发布包并安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh | sudo bash
+```
+
+可选：
+
+```bash
+# 使用 stable 渠道
+curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh \
+  | sudo CHANNEL=stable bash
 ```
 
 ## 升级

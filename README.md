@@ -43,6 +43,27 @@ sudo bash deploy/install.sh
 - 安装 sudoers 与 systemd 服务
 - 自动启动面板
 
+## 新设备一键安装（从 GitHub 下载最新版本）
+适用于**全新 Debian 设备**，无需先 clone 仓库：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh | sudo bash
+```
+
+可选参数（按需）：
+
+```bash
+# stable 渠道 + arm64
+curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh \
+  | sudo CHANNEL=stable ARCH=arm64 bash
+```
+
+脚本默认行为：
+- 自动识别架构（amd64/arm64）
+- 从 `updates/latest.json` 读取指定 channel+arch 的发布包
+- 下载并校验 sha256（manifest 提供时）
+- 解压后执行发布包内 `install.sh`
+
 ## 发布包
 已增加 release 流程：
 ```bash
