@@ -28,6 +28,7 @@ mkdir -p "$APP_DIR/logs"
 
 install -m 755 "$APP_DIR/scripts/sbctl.sh" /usr/local/bin/sbctl.sh
 install -m 755 "$APP_DIR/scripts/mdctl.sh" /usr/local/bin/mdctl.sh
+mkdir -p /etc/sudoers.d
 
 cd "$APP_DIR"
 if [[ ! -f configs/panel.json ]]; then

@@ -94,6 +94,7 @@ useradd -r -s /usr/sbin/nologin -d "$BASE_DIR" "$RUN_USER" 2>/dev/null || true
 
 install -m 755 sbctl.sh /usr/local/bin/sbctl.sh
 install -m 755 mdctl.sh /usr/local/bin/mdctl.sh
+mkdir -p /etc/sudoers.d
 cp sudoers.singdns-panel "$SUDOERS_FILE"
 chmod 440 "$SUDOERS_FILE"
 visudo -c
@@ -178,6 +179,7 @@ trap 'rollback' ERR
 
 install -m 755 sbctl.sh /usr/local/bin/sbctl.sh
 install -m 755 mdctl.sh /usr/local/bin/mdctl.sh
+mkdir -p /etc/sudoers.d
 cp sudoers.singdns-panel "$SUDOERS_FILE"
 chmod 440 "$SUDOERS_FILE"
 visudo -c

@@ -54,6 +54,7 @@ install_deps_if_needed() {
   need_cmd curl || missing+=(curl)
   need_cmd tar || missing+=(tar)
   need_cmd python3 || missing+=(python3)
+  need_cmd visudo || missing+=(sudo)
 
   if [[ ${#missing[@]} -eq 0 ]]; then
     return
@@ -173,6 +174,7 @@ if [[ ! -x "$REL_DIR/install.sh" ]]; then
 fi
 
 echo "[5/5] 执行安装脚本"
+mkdir -p /etc/sudoers.d
 cd "$REL_DIR"
 bash install.sh
 
