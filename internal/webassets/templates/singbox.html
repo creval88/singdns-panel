@@ -186,7 +186,24 @@ function confirmUpdateSub() {
 async function runSingboxAction(action) { const j = await api('/api/singbox/action/' + action); if (j.ok) await refreshSingboxOverview(); }
 async function saveSub() { const j = await postJSON('/api/singbox/subscription', {url: document.getElementById('suburl').value}); if (j.ok) await refreshSingboxOverview(); }
 async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview({keepEditor:true}); return j; }
-async function validateConfig() { await postJSON('/api/singbox/config/validate', {config: getCurrentDraft()}); }
+async function validateConfig() {
+  const j = await postJSON('/api/singbox/config/validate', {config: getCurrentDraft()});
+  if (j && !j.ok && j.error) {
+    const lineMatch = String(j.error).match(/line\s*(\d+)/i) || String(j.error).match(/(\d+):(\d+)/);
+    if (lineMatch) {
+      const lineNo = Number(lineMatch[1]);
+      const el = getConfigEl();
+      if (el && lineNo > 0) {
+        const lines = el.value.replace(/\r/g, '').split('\n');
+        let pos = 0;
+        for (let i = 0; i < lineNo - 1 && i < lines.length; i++) pos += lines[i].length + 1;
+        el.focus();
+        el.setSelectionRange(pos, Math.min(pos + (lines[lineNo - 1] || '').length, el.value.length));
+      }
+    }
+  }
+  return j;
+}
 async function saveConfig(restart) {
   const current = getCurrentDraft();
   if (serverChangedWhileDirty && !confirm('检测到服务器配置已变化。继续保存会以当前草稿覆盖服务器版本。确认继续？')) return;
@@ -204,6 +221,20 @@ async function createBackup() {
     await refreshSingboxOverview({keepEditor:true});
     setTimeout(() => refreshSingboxOverview({keepEditor:true}), 500);
   }
+}
+async function quickRollbackLatestBackup() {
+  const r = await fetch('/api/singbox/backups');
+  const list = await r.json();
+  if (!Array.isArray(list) || !list.length) {
+    toast('暂无可回滚备份', false);
+    return;
+  }
+  const latest = list[0];
+  if (!latest || !latest.name) {
+    toast('未找到最新备份', false);
+    return;
+  }
+  await restoreBackup(latest.name);
 }
 async function upgradeCore() {
   if (confirm('当前版本：{{js .Version}}\n最新版本：{{js .LatestVersion}}\n\n确认更新 Sing-box 核心？')) {

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -123,8 +124,42 @@ func (s *SingBoxService) ValidateConfig(content string) error {
 		return err
 	}
 	defer os.Remove(tmp)
-	_, err := utils.Run(10*time.Second, s.cfg.BinPath, "check", "-c", tmp)
-	return err
+	res, err := utils.Run(10*time.Second, s.cfg.BinPath, "check", "-c", tmp)
+	if err != nil {
+		detail := strings.TrimSpace((res.Stdout + "\n" + res.Stderr))
+		if detail == "" {
+			return err
+		}
+		line, col := extractLineCol(detail)
+		if line > 0 {
+			if col > 0 {
+				return fmt.Errorf("配置校验失败（line %d, col %d）: %s", line, col, detail)
+			}
+			return fmt.Errorf("配置校验失败（line %d）: %s", line, detail)
+		}
+		return fmt.Errorf("配置校验失败: %s", detail)
+	}
+	return nil
+}
+
+func extractLineCol(detail string) (line int, col int) {
+	re := regexp.MustCompile(`(?i)line\s*(\d+)(?:\s*[:,]?\s*(?:col|column)\s*(\d+))?`)
+	m := re.FindStringSubmatch(detail)
+	if len(m) >= 2 {
+		fmt.Sscanf(m[1], "%d", &line)
+	}
+	if len(m) >= 3 && m[2] != "" {
+		fmt.Sscanf(m[2], "%d", &col)
+	}
+	if line == 0 {
+		re2 := regexp.MustCompile(`(?i)(\d+):(\d+)`)
+		m2 := re2.FindStringSubmatch(detail)
+		if len(m2) == 3 {
+			fmt.Sscanf(m2[1], "%d", &line)
+			fmt.Sscanf(m2[2], "%d", &col)
+		}
+	}
+	return
 }
 
 func (s *SingBoxService) writeConfigFile(content string) error {
