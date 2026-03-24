@@ -38,6 +38,7 @@
         </div>
         <div class="actions" style="margin-bottom: 8px;">
           <button class="ghost" onclick="saveMosdnsConfig()">保存面板地址</button>
+          <button class="ghost" onclick="autofillMosdnsURL()">自动填充当前访问域名:9099/log</button>
           <button class="ghost" onclick="reloadMosdnsFrame()">刷新嵌入面板</button>
         </div>
         <p class="section-note" id="mosdns-url-note">建议填写局域网 IP（不要填 127.0.0.1，否则其它设备无法访问）。</p>
@@ -92,6 +93,18 @@
         if (j && j.ok && j.config) {
           setMosdnsURL(j.config.web_url || webURL);
         }
+      }
+
+      function autofillMosdnsURL() {
+        const p = window.location.protocol || 'http:';
+        const h = window.location.hostname || '';
+        if (!h) {
+          toast('无法识别当前访问域名', false);
+          return;
+        }
+        const auto = `${p}//${h}:9099/log`;
+        setMosdnsURL(auto);
+        toast('已自动填充，请点击“保存面板地址”生效', true);
       }
 
       function reloadMosdnsFrame() {
