@@ -1,13 +1,13 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="layout">{{template "sidebar" .}}<main class="content">{{template "page_header" .}}
 <div class="stats-grid dashboard-grid dashboard-grid-3">
+  <div id="health-card" class="stat-card stat-card-uniform {{if eq .Health.Level "bad"}}alert{{end}}"><div class="card-title-row"><div class="stat-label">健康总览</div><span class="badge">P0-1</span></div><div id="health-summary" class="stat-value {{if eq .Health.Level "ok"}}ok{{else if eq .Health.Level "warn"}}warn-text{{else}}bad{{end}}">{{.Health.Summary}}</div><div id="health-last-update" class="muted">订阅最近：{{or .Health.LastUpdateStatus "-"}} · {{or .Health.LastUpdateTime "-"}}</div><div id="health-last-success" class="muted">订阅成功：{{or .Health.LastSuccessTime "-"}}</div></div>
   <div id="sb-card" class="stat-card stat-card-uniform {{if not .SingBox.Active}}alert{{end}}"><div class="card-title-row"><div class="stat-label">Sing-box</div><span class="badge">Service</span></div><div id="sb-state" class="stat-value {{if .SingBox.Active}}ok{{else}}bad{{end}}">{{if .SingBox.Active}}运行中{{else}}已停止{{end}}</div><div id="sb-meta" class="muted">开机自启：{{if .SingBox.Enabled}}开启{{else}}关闭{{end}}</div><div id="sb-alert" class="muted">{{if .SingBox.Active}}服务正常{{else}}服务异常，需要处理{{end}}</div></div>
   <div id="md-card" class="stat-card stat-card-uniform {{if not .MosDNS.Active}}alert{{end}}"><div class="card-title-row"><div class="stat-label">MosDNS</div><span class="badge">Service</span></div><div id="md-state" class="stat-value {{if .MosDNS.Active}}ok{{else}}bad{{end}}">{{if .MosDNS.Active}}运行中{{else}}已停止{{end}}</div><div id="md-meta" class="muted">开机自启：{{if .MosDNS.Enabled}}开启{{else}}关闭{{end}}</div><div id="md-alert" class="muted">{{if .MosDNS.Active}}服务正常{{else}}服务异常，需要处理{{end}}</div></div>
-  <div class="stat-card stat-card-uniform {{if not .Cron.Enabled}}alert{{end}}"><div class="card-title-row"><div class="stat-label">配置新鲜度</div><span class="badge">Config</span></div><div class="stat-value" id="config-updated-at">{{or .UpdatedAt "未知"}}</div><div class="muted" id="config-json-state">{{if .ConfigStatus.ServerJSONValid}}JSON 有效{{else}}JSON 无效，需要检查{{end}}</div><div class="muted" id="config-size-state">{{if .ConfigStatus}}{{.ConfigStatus.ServerBytes}} bytes / {{.ConfigStatus.ServerLines}} lines{{else}}-{{end}}</div></div>
 </div>
 
 <div class="stats-grid dashboard-grid dashboard-grid-3">
-  <div class="stat-card stat-card-uniform"><div class="card-title-row"><div class="stat-label">订阅状态</div><span class="badge">Subscription</span></div><div class="stat-value" id="sub-configured">{{if .Subscription.Configured}}已配置{{else}}未配置{{end}}</div><div class="muted">来源：<span id="sub-host">{{or .Subscription.Host "-"}}</span></div><div class="muted">最近执行：<span id="sub-last-update">{{or .Subscription.LastUpdateTime "尚无记录"}}</span></div></div>
-  <div class="stat-card stat-card-uniform"><div class="card-title-row"><div class="stat-label">备份状态</div><span class="badge">Backup</span></div><div class="stat-value" id="backup-count">{{.BackupCount}}</div><div class="muted" id="latest-backup-time">最近：{{.LatestBackupTime}}</div><div class="muted" id="backup-current-match">当前匹配：{{if .BackupStatus}}{{or .BackupStatus.CurrentMatchesName "无完全匹配"}}{{else}}无完全匹配{{end}}</div></div>
+  <div class="stat-card stat-card-uniform"><div class="card-title-row"><div class="stat-label">订阅结果卡</div><span class="badge">P0-2</span></div><div class="stat-value"><span id="sub-success">{{.SubDigest.Success}}</span> 成功 / <span id="sub-failed">{{.SubDigest.Failed}}</span> 失败</div><div id="sub-last" class="muted">最近：{{.SubDigest.LastStatus}} · {{.SubDigest.LastStage}} · {{.SubDigest.LastTime}}</div><div id="sub-last-msg" class="muted">{{.SubDigest.LastMessage}}</div></div>
+  <div class="stat-card stat-card-uniform"><div class="card-title-row"><div class="stat-label">配置新鲜度</div><span class="badge">Config</span></div><div class="stat-value" id="config-updated-at">{{or .UpdatedAt "未知"}}</div><div class="muted" id="config-json-state">{{if .ConfigStatus.ServerJSONValid}}JSON 有效{{else}}JSON 无效，需要检查{{end}}</div><div class="muted" id="config-size-state">{{if .ConfigStatus}}{{.ConfigStatus.ServerBytes}} bytes / {{.ConfigStatus.ServerLines}} lines{{else}}-{{end}}</div></div>
   <div class="stat-card stat-card-uniform"><div class="card-title-row"><div class="stat-label">系统资源</div><span class="badge">Host</span></div><div class="stat-value"><span id="cpu-usage">{{if .HostStats}}{{.HostStats.CPUPercent}}{{else}}-{{end}}</span> / <span id="mem-usage">{{if .HostStats}}{{.HostStats.MemPercent}}{{else}}-{{end}}</span></div><div class="muted" id="mem-detail">{{if .HostStats}}{{.HostStats.MemUsed}} / {{.HostStats.MemTotal}}{{else}}-{{end}}</div><div class="muted">CPU / Memory</div></div>
 </div>
 
@@ -26,23 +26,22 @@
 
 <div class="grid two dashboard-detail-grid" style="margin-top:16px">
   <section class="card">
-    <div class="card-title-row"><h3>服务与配置概览</h3><span class="badge">Overview</span></div>
-    <div class="status-list kv-list compact-kv">
-      <div><b>订阅链接</b><span id="sub-url">{{.SubURL}}</span></div>
-      <div><b>Clash API</b><span id="clash-state">{{if .ClashAPI.Enabled}}可用（端口 {{.ClashAPI.Port}}）{{else}}未启用{{end}}</span></div>
-      <div><b>自动更新</b><span id="cron-state">{{if .Cron.Enabled}}已开启 · {{.Cron.Summary}}{{else}}未开启{{end}}</span></div>
-      <div><b>最近审计</b><span id="recent-audit">{{.RecentAudit}}</span></div>
-      <div><b>MosDNS 面板</b><a href="{{.MosDNSWeb}}" target="_blank">打开</a></div>
-    </div>
+    <div class="card-title-row"><h3>健康问题与建议动作</h3><span class="badge">Actions</span></div>
+    <div id="health-issues" class="status-list"></div>
+    <div class="divider"></div>
+    <div id="health-suggestions" class="status-list"></div>
     <div class="actions"><a class="btn-link" href="/singbox">进入 Sing-box 页面</a><a class="ghost btn-link" href="/mosdns">进入 MosDNS 页面</a></div>
   </section>
   <section class="card">
-    <div class="card-title-row"><h3>版本与更新</h3><span class="badge">Release</span></div>
-    <div class="status-list kv-list compact-kv">
-      <div><b>面板版本</b><span id="panel-version">{{.PanelVersion}}</span></div>
-      <div><b>Sing-box 当前</b><span id="sb-version-short">{{.SBVersionShort}}</span></div>
-      <div><b>Sing-box 最新</b><span id="latest-version-detail">{{.LatestVersion}}</span></div>
-      <div><b>最近备份年龄</b><span id="latest-backup-ago">{{.LatestBackupAgo}}</span></div>
+    <div class="card-title-row"><h3>订阅最近结果（最多 8 条）</h3><span class="badge">Events</span></div>
+    <div id="sub-events" class="backup-list">
+      {{range .SubEvents}}
+      <div class="backup-item backup-item-compact">
+        <div style="min-width:0"><div class="backup-name"><b>{{.Status}}</b> · {{.Stage}} · {{.Time}}</div><div class="muted">{{.Message}}</div></div>
+        <div class="muted">{{if .DurationText}}{{.DurationText}}{{else}}-{{end}}</div>
+      </div>
+      {{end}}
+      {{if not .SubEvents}}<div class="empty-text">暂无订阅更新记录</div>{{end}}
     </div>
   </section>
 </div>
@@ -66,30 +65,62 @@ function safeText(id, value, fallback) {
   if (!el) return;
   el.textContent = (value === undefined || value === null || value === '') ? (fallback || '-') : value;
 }
+function renderHealth(health) {
+  const card = document.getElementById('health-card');
+  const summary = document.getElementById('health-summary');
+  const issues = document.getElementById('health-issues');
+  const suggestions = document.getElementById('health-suggestions');
+  if (!health) return;
+  if (card) card.classList.toggle('alert', health.level === 'bad');
+  if (summary) {
+    summary.textContent = health.summary || '-';
+    summary.className = 'stat-value ' + (health.level === 'ok' ? 'ok' : (health.level === 'warn' ? 'warn-text' : 'bad'));
+  }
+  safeText('health-last-update', '订阅最近：' + (health.last_update_status || '-') + ' · ' + (health.last_update_time || '-'));
+  safeText('health-last-success', '订阅成功：' + (health.last_success_time || '-'));
+  if (issues) {
+    const items = Array.isArray(health.issues) ? health.issues : [];
+    issues.innerHTML = items.length ? items.map(i => `<div class="muted">• ${escapeHTML(i)}</div>`).join('') : '<div class="ok">暂无风险项</div>';
+  }
+  if (suggestions) {
+    const items = Array.isArray(health.suggestions) ? health.suggestions : [];
+    suggestions.innerHTML = items.length ? items.map(i => `<div class="muted">→ ${escapeHTML(i)}</div>`).join('') : '<div class="muted">当前无需操作</div>';
+  }
+}
+function renderSubDigest(d) {
+  if (!d) return;
+  safeText('sub-success', d.success, '0');
+  safeText('sub-failed', d.failed, '0');
+  safeText('sub-last', '最近：' + (d.last_status || '-') + ' · ' + (d.last_stage || '-') + ' · ' + (d.last_time || '-'));
+  safeText('sub-last-msg', d.last_message, '-');
+}
+function renderSubEvents(events) {
+  const wrap = document.getElementById('sub-events');
+  if (!wrap) return;
+  const list = Array.isArray(events) ? events.slice(0, 8) : [];
+  if (!list.length) {
+    wrap.innerHTML = '<div class="empty-text">暂无订阅更新记录</div>';
+    return;
+  }
+  wrap.innerHTML = list.map(ev => {
+    const statusCls = ev.status === 'ok' ? 'ok' : (ev.status === 'error' ? 'bad' : 'warn-text');
+    return `<div class="backup-item backup-item-compact"><div style="min-width:0"><div class="backup-name"><b class="${statusCls}">${escapeHTML(ev.status || '-')}</b> · ${escapeHTML(ev.stage || '-')} · ${escapeHTML(ev.time || '-')}</div><div class="muted">${escapeHTML(ev.message || '-')}</div></div><div class="muted">${escapeHTML(ev.duration_text || '-')}</div></div>`;
+  }).join('');
+}
+
 async function refreshDashboard() {
   const r = await fetch('/api/dashboard');
   const j = await r.json();
   if (j.singbox) setServiceCard('sb', j.singbox);
   if (j.mosdns) setServiceCard('md', j.mosdns);
-  safeText('latest-version-detail', j.latestVersion, '未知');
+  if (j.health) renderHealth(j.health);
+  if (j.subDigest) renderSubDigest(j.subDigest);
+  if (j.subEvents) renderSubEvents(j.subEvents);
   safeText('config-updated-at', j.updatedAt, '未知');
-  safeText('backup-count', j.backupCount, '0');
-  safeText('latest-backup-time', '最近：' + (j.latestBackupTime || '暂无'));
-  safeText('latest-backup-ago', j.latestBackupAgo, '暂无');
-  safeText('recent-audit', j.recentAudit, '暂无');
-  safeText('sub-url', j.subURL, '-');
-  safeText('cron-state', j.cron && j.cron.enabled ? ('已开启 · ' + (j.cron.summary || '')) : '未开启');
-  if (j.subscription) {
-    safeText('sub-configured', j.subscription.configured ? '已配置' : '未配置');
-    safeText('sub-host', j.subscription.host, '-');
-    safeText('sub-last-update', j.subscription.last_update_time, '尚无记录');
-  }
-  if (j.clashAPI) safeText('clash-state', j.clashAPI.enabled ? ('可用（端口 ' + j.clashAPI.port + '）') : '未启用');
   if (j.configStatus) {
     safeText('config-json-state', j.configStatus.server_json_valid ? 'JSON 有效' : 'JSON 无效，需要检查');
     safeText('config-size-state', (j.configStatus.server_bytes || 0) + ' bytes / ' + (j.configStatus.server_lines || 0) + ' lines');
   }
-  if (j.backupStatus) safeText('backup-current-match', '当前匹配：' + (j.backupStatus.current_matches_name || '无完全匹配'));
   if (j.hostStats) {
     safeText('cpu-usage', j.hostStats.cpu_percent, '-');
     safeText('mem-usage', j.hostStats.mem_percent, '-');
