@@ -39,6 +39,7 @@
       <button class="ghost" onclick="quickRestartMosdns()">重启 MosDNS</button>
       <button class="warn" onclick="quickRestartPanel()">重启面板</button>
       <button class="ghost" onclick="copyQuickDiagnostics()">复制诊断包</button>
+      <button class="ghost" onclick="downloadQuickDiagnostics()">下载诊断包</button>
     </div>
     <div class="actions"><a class="btn-link" href="/singbox">进入 Sing-box 页面</a><a class="ghost btn-link" href="/mosdns">进入 MosDNS 页面</a></div>
   </section>
@@ -171,6 +172,10 @@ async function copyQuickDiagnostics() {
   } catch (e) {
     toast('复制诊断包失败: ' + e, false);
   }
+}
+
+function downloadQuickDiagnostics() {
+  window.open('/api/diagnostics/quick?download=1', '_blank');
 }
 
 function renderActionTimeline(items) {

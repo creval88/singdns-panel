@@ -9,6 +9,22 @@ import (
 )
 
 func (a *App) QuickDiagnosticsAPI(w http.ResponseWriter, r *http.Request) {
+	text := a.buildQuickDiagnosticsText()
+	if r.URL.Query().Get("download") == "1" {
+		name := "singdns-diagnostics-" + time.Now().Format("20060102-150405") + ".txt"
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+		_, _ = w.Write([]byte(text))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":   true,
+		"text": text,
+	})
+}
+
+func (a *App) buildQuickDiagnosticsText() string {
 	sb, _ := a.SingBox.Status()
 	md, _ := a.MosDNS.Status()
 	panel := a.PanelVersionAPIData()
@@ -59,12 +75,7 @@ func (a *App) QuickDiagnosticsAPI(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("audit.%d.result=%s", idx, cleanText(item.Result)),
 		)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":   true,
-		"text": strings.Join(lines, "\n"),
-	})
+	return strings.Join(lines, "\n")
 }
 
 func countLogLevel(logs string) (errorCount int, warnCount int) {
