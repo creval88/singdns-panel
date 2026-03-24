@@ -58,6 +58,7 @@
             <button class="ghost" onclick="checkPanelRelease()">检查更新</button>
             <button class="ghost" onclick="copyPanelDiagnostics()">复制诊断信息</button>
             <button class="ghost" onclick="upgradePanel()">执行本地包升级</button>
+            <button class="warn" onclick="restartPanel()">重启面板服务</button>
           </div>
           <div class="section-note" id="panel-upgrade-note">{{if .PanelRelease}}检测到本地升级包目录：{{.PanelRelease.Path}}{{else}}将发布包解压到配置的 updates 目录后，可在此检测与执行升级。{{end}}</div>
         </section>
@@ -328,6 +329,31 @@
           toast('升级任务仍在处理中，请稍后手动刷新页面', true);
           setBusy(false);
         }
+      }
+
+      async function restartPanel() {
+        if (!confirm('重启面板会导致当前页面短暂断开（约 3-10 秒），确认继续？')) return;
+        setBusy(true, '正在重启面板服务...');
+
+        let j = null;
+        try {
+          j = await request('/api/panel/restart', {
+            method:'POST',
+            body: JSON.stringify({}),
+            silent:true
+          });
+        } catch(e) {
+          // 重启中断开属正常
+        }
+
+        if (!j || !j.ok) {
+          setBusy(false);
+          toast('触发重启失败', false);
+          return;
+        }
+
+        toast(j.message || '已触发面板重启', true);
+        setTimeout(() => window.location.reload(), 6000);
       }
     </script>
   </main>

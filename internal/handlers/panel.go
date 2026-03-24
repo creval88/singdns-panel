@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"singdns-panel/internal/services"
+	"singdns-panel/internal/utils"
 )
 
 func (a *App) PanelVersionAPI(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +133,21 @@ func (a *App) PanelUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 		"message": "已触发面板升级任务，服务可能会短暂重启，请约 10-30 秒后刷新页面",
 		"task":    task,
 	})
+}
+
+func (a *App) PanelRestartAPI(w http.ResponseWriter, r *http.Request) {
+	a.auditMessageFromRequest(r, "panel.restart", "触发面板重启")
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"message": "已触发面板重启，页面将短暂断开（约 3-10 秒）",
+	})
+
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "restart", "singdns-panel")
+	}()
 }
 
 func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {

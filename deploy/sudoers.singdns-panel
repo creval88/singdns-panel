@@ -15,3 +15,4 @@ panel ALL=(root) NOPASSWD: /usr/bin/crontab -l
 panel ALL=(root) NOPASSWD: /usr/bin/crontab -
 panel ALL=(root) NOPASSWD: /usr/bin/crontab -r
 panel ALL=(root) NOPASSWD: /bin/bash /opt/singdns-panel/updates/*/upgrade.sh
+panel ALL=(root) NOPASSWD: /bin/systemctl restart singdns-panel

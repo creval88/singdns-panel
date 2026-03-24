@@ -1,1 +1,125 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="layout">{{template "sidebar" .}}<main class="content">{{template "page_header" .}}<div class="actions"><button onclick="api('/api/mosdns/action/start')">启动</button><button class="warn" onclick="confirmMosdnsStop()">停止</button><button onclick="api('/api/mosdns/action/restart')">重启</button><a class="ghost btn-link" target="_blank" href="{{.WebURL}}">新窗口打开原面板</a></div><div class="grid two-fixed"><section class="card compact"><div class="card-title-row"><h3>运行状态</h3><span class="badge">实时</span></div><div class="status-list"><div><b>服务名称：</b><span id="md-name">{{.Status.Name}}</span></div><div><b>当前状态：</b><span id="md-active">{{if .Status.Active}}<span class="ok">运行中</span>{{else}}<span class="bad">已停止</span>{{end}}</span></div><div><b>开机自启：</b><span id="md-enabled">{{if .Status.Enabled}}开启{{else}}关闭{{end}}</span></div><div><b>ActiveState：</b><span id="md-active-state">{{.Status.ActiveState}}</span></div><div><b>SubState：</b><span id="md-sub-state">{{.Status.SubState}}</span></div><div><b>说明：</b><span id="md-summary">{{.Status.Summary}}</span></div></div><p class="muted">如果下方嵌入失败，通常是 MosDNS Web 设置了 iframe 限制。</p></section><section class="card iframe-card"><div class="card-title-row"><h3>内置 Web 面板</h3><span class="badge">嵌入模式</span></div><iframe class="mosdns-frame" src="{{.WebURL}}" referrerpolicy="no-referrer"></iframe></section></div><script src="/static/app.js"></script><script>function confirmMosdnsStop(){if(confirm('确认停止 MosDNS？停止后 DNS 相关功能可能受影响。')) api('/api/mosdns/action/stop')}async function refreshMosdnsStatus(){const r=await fetch('/api/mosdns/status');const j=await r.json();document.getElementById('md-name').textContent=j.name||'';document.getElementById('md-active').innerHTML=j.active?'<span class="ok">运行中</span>':'<span class="bad">已停止</span>';document.getElementById('md-enabled').textContent=j.enabled?'开启':'关闭';document.getElementById('md-active-state').textContent=j.active_state||'';document.getElementById('md-sub-state').textContent=j.sub_state||'';document.getElementById('md-summary').textContent=j.summary||''}function startManagedPolling(fn,ms){let t=setInterval(()=>{if(!document.hidden) fn()},ms);document.addEventListener('visibilitychange',()=>{if(!document.hidden) fn()});return t}startManagedPolling(refreshMosdnsStatus,5000)</script></main></div></body></html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="layout">
+  {{template "sidebar" .}}
+  <main class="content">
+    {{template "page_header" .}}
+    <div class="actions">
+      <button onclick="api('/api/mosdns/action/start')">启动</button>
+      <button class="warn" onclick="confirmMosdnsStop()">停止</button>
+      <button onclick="api('/api/mosdns/action/restart')">重启</button>
+      <a id="mosdns-web-link" class="ghost btn-link" target="_blank" href="{{.WebURL}}">新窗口打开原面板</a>
+    </div>
+
+    <div class="grid two-fixed">
+      <section class="card compact">
+        <div class="card-title-row"><h3>运行状态</h3><span class="badge">实时</span></div>
+        <div class="status-list">
+          <div><b>服务名称：</b><span id="md-name">{{.Status.Name}}</span></div>
+          <div><b>当前状态：</b><span id="md-active">{{if .Status.Active}}<span class="ok">运行中</span>{{else}}<span class="bad">已停止</span>{{end}}</span></div>
+          <div><b>开机自启：</b><span id="md-enabled">{{if .Status.Enabled}}开启{{else}}关闭{{end}}</span></div>
+          <div><b>ActiveState：</b><span id="md-active-state">{{.Status.ActiveState}}</span></div>
+          <div><b>SubState：</b><span id="md-sub-state">{{.Status.SubState}}</span></div>
+          <div><b>说明：</b><span id="md-summary">{{.Status.Summary}}</span></div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="card-title-row"><h3>MosDNS 面板地址</h3><span class="badge">Config</span></div>
+        <div style="margin-bottom: 10px;">
+          <label class="field-label" for="mosdns-web-url">Web 面板 URL</label>
+          <input id="mosdns-web-url" placeholder="例如: http://10.0.0.8:9099/log" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
+        </div>
+        <div class="actions" style="margin-bottom: 8px;">
+          <button class="ghost" onclick="saveMosdnsConfig()">保存面板地址</button>
+          <button class="ghost" onclick="reloadMosdnsFrame()">刷新嵌入面板</button>
+        </div>
+        <p class="section-note" id="mosdns-url-note">建议填写局域网 IP（不要填 127.0.0.1，否则其它设备无法访问）。</p>
+        <p class="muted">如果下方嵌入失败，通常是 MosDNS Web 设置了 iframe 限制。</p>
+      </section>
+
+      <section class="card iframe-card">
+        <div class="card-title-row"><h3>内置 Web 面板</h3><span class="badge">嵌入模式</span></div>
+        <iframe id="mosdns-frame" class="mosdns-frame" src="{{.WebURL}}" referrerpolicy="no-referrer"></iframe>
+      </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+    <script>
+      function confirmMosdnsStop(){
+        if(confirm('确认停止 MosDNS？停止后 DNS 相关功能可能受影响。')) api('/api/mosdns/action/stop')
+      }
+
+      function setMosdnsURL(url) {
+        const clean = (url || '').trim();
+        const input = document.getElementById('mosdns-web-url');
+        const frame = document.getElementById('mosdns-frame');
+        const link = document.getElementById('mosdns-web-link');
+        const note = document.getElementById('mosdns-url-note');
+        if (input) input.value = clean;
+        if (frame) frame.src = clean;
+        if (link) link.href = clean;
+        if (note) {
+          note.textContent = clean.includes('127.0.0.1')
+            ? '当前 URL 使用 127.0.0.1，仅服务器本机可访问。建议改为局域网 IP。'
+            : '建议填写局域网 IP（不要填 127.0.0.1，否则其它设备无法访问）。';
+        }
+      }
+
+      async function loadMosdnsConfig() {
+        try {
+          const r = await fetch('/api/mosdns/config', {cache:'no-store'});
+          const j = await r.json();
+          if (!j.ok || !j.config) return;
+          setMosdnsURL(j.config.web_url || '');
+        } catch (e) {
+          console.log('loadMosdnsConfig failed', e);
+        }
+      }
+
+      async function saveMosdnsConfig() {
+        const webURL = document.getElementById('mosdns-web-url').value.trim();
+        const j = await request('/api/mosdns/config', {
+          method:'POST',
+          body: JSON.stringify({ web_url: webURL })
+        });
+        if (j && j.ok && j.config) {
+          setMosdnsURL(j.config.web_url || webURL);
+        }
+      }
+
+      function reloadMosdnsFrame() {
+        const frame = document.getElementById('mosdns-frame');
+        if (frame) frame.src = frame.src;
+      }
+
+      async function refreshMosdnsStatus(){
+        const r = await fetch('/api/mosdns/status');
+        const j = await r.json();
+        document.getElementById('md-name').textContent = j.name || '';
+        document.getElementById('md-active').innerHTML = j.active ? '<span class="ok">运行中</span>' : '<span class="bad">已停止</span>';
+        document.getElementById('md-enabled').textContent = j.enabled ? '开启' : '关闭';
+        document.getElementById('md-active-state').textContent = j.active_state || '';
+        document.getElementById('md-sub-state').textContent = j.sub_state || '';
+        document.getElementById('md-summary').textContent = j.summary || '';
+      }
+
+      function startManagedPolling(fn,ms){
+        let t=setInterval(()=>{if(!document.hidden) fn()},ms);
+        document.addEventListener('visibilitychange',()=>{if(!document.hidden) fn()});
+        return t;
+      }
+
+      loadMosdnsConfig();
+      startManagedPolling(refreshMosdnsStatus,5000)
+    </script>
+  </main>
+</div>
+</body>
+</html>

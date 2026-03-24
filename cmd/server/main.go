@@ -143,6 +143,9 @@ func main() {
 
 		pr.Get("/api/mosdns/status", app.MosDNSStatusAPI)
 		pr.Post("/api/mosdns/action/{action}", app.MosDNSActionAPI)
+		pr.Get("/api/mosdns/config", app.MosDNSConfigAPI)
+		pr.Post("/api/mosdns/config", app.MosDNSConfigSaveAPI)
+		pr.Post("/api/panel/restart", app.PanelRestartAPI)
 		pr.Get("/api/logs/{name}", app.ServiceLogsAPI)
 		pr.Get("/api/audit", app.AuditAPI)
 	})
