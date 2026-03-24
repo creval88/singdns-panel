@@ -38,6 +38,7 @@
       <button class="ghost" onclick="quickUpdateSubscription()">立即更新订阅</button>
       <button class="ghost" onclick="quickRestartMosdns()">重启 MosDNS</button>
       <button class="warn" onclick="quickRestartPanel()">重启面板</button>
+      <button class="ghost" onclick="copyQuickDiagnostics()">复制诊断包</button>
     </div>
     <div class="actions"><a class="btn-link" href="/singbox">进入 Sing-box 页面</a><a class="ghost btn-link" href="/mosdns">进入 MosDNS 页面</a></div>
   </section>
@@ -155,6 +156,21 @@ async function quickRestartPanel() {
   }
   toast(j.message || '已触发面板重启', true);
   setTimeout(() => window.location.reload(), 6000);
+}
+
+async function copyQuickDiagnostics() {
+  try {
+    const r = await fetch('/api/diagnostics/quick', {cache:'no-store'});
+    const j = await r.json();
+    if (!j.ok || !j.text) {
+      toast('生成诊断包失败', false);
+      return;
+    }
+    await navigator.clipboard.writeText(j.text);
+    toast('诊断包已复制', true);
+  } catch (e) {
+    toast('复制诊断包失败: ' + e, false);
+  }
 }
 
 function renderActionTimeline(items) {

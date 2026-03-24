@@ -109,6 +109,7 @@ func main() {
 		pr.Get("/system", app.SystemPage)
 
 		pr.Get("/api/dashboard", app.DashboardAPI)
+		pr.Get("/api/diagnostics/quick", app.QuickDiagnosticsAPI)
 		pr.Get("/api/panel/version", app.PanelVersionAPI)
 		pr.Get("/api/panel/update-config", app.PanelUpdateConfigAPI)
 		pr.Post("/api/panel/update-config", app.PanelUpdateConfigSaveAPI)
