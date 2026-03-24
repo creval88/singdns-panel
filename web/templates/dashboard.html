@@ -30,6 +30,12 @@
     <div id="health-issues" class="status-list"></div>
     <div class="divider"></div>
     <div id="health-suggestions" class="status-list"></div>
+    <div class="actions">
+      <button onclick="quickRestartSingbox()">重启 Sing-box</button>
+      <button class="ghost" onclick="quickUpdateSubscription()">立即更新订阅</button>
+      <button class="ghost" onclick="quickRestartMosdns()">重启 MosDNS</button>
+      <button class="warn" onclick="quickRestartPanel()">重启面板</button>
+    </div>
     <div class="actions"><a class="btn-link" href="/singbox">进入 Sing-box 页面</a><a class="ghost btn-link" href="/mosdns">进入 MosDNS 页面</a></div>
   </section>
   <section class="card">
@@ -106,6 +112,46 @@ function renderSubEvents(events) {
     const statusCls = ev.status === 'ok' ? 'ok' : (ev.status === 'error' ? 'bad' : 'warn-text');
     return `<div class="backup-item backup-item-compact"><div style="min-width:0"><div class="backup-name"><b class="${statusCls}">${escapeHTML(ev.status || '-')}</b> · ${escapeHTML(ev.stage || '-')} · ${escapeHTML(ev.time || '-')}</div><div class="muted">${escapeHTML(ev.message || '-')}</div></div><div class="muted">${escapeHTML(ev.duration_text || '-')}</div></div>`;
   }).join('');
+}
+
+async function quickRestartSingbox() {
+  await api('/api/singbox/action/restart');
+  refreshDashboard();
+}
+
+async function quickUpdateSubscription() {
+  setBusy(true, '正在执行订阅更新...');
+  try {
+    await api('/api/singbox/subscription/update');
+  } finally {
+    setBusy(false);
+    setTimeout(refreshDashboard, 1200);
+  }
+}
+
+async function quickRestartMosdns() {
+  await api('/api/mosdns/action/restart');
+  refreshDashboard();
+}
+
+async function quickRestartPanel() {
+  if (!confirm('重启面板会导致当前页面短暂断开（约 3-10 秒），确认继续？')) return;
+  setBusy(true, '正在重启面板服务...');
+  let j = null;
+  try {
+    j = await request('/api/panel/restart', {
+      method:'POST',
+      body: JSON.stringify({}),
+      silent:true
+    });
+  } catch(_) {}
+  if (!j || !j.ok) {
+    setBusy(false);
+    toast('触发重启失败', false);
+    return;
+  }
+  toast(j.message || '已触发面板重启', true);
+  setTimeout(() => window.location.reload(), 6000);
 }
 
 async function refreshDashboard() {
