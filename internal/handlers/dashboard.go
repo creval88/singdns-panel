@@ -80,7 +80,8 @@ func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
 	if configStatus == nil {
 		configStatus = &services.ConfigStatus{}
 	}
-	audits, _ := a.Audit.List(1)
+	audits, _ := a.Audit.List(20)
+	actionTimeline := summarizeActionTimeline(audits, 3)
 	clashAPI, _ := a.SingBox.ClashAPIInfo(r.Host)
 	if clashAPI == nil {
 		clashAPI = &services.ClashAPIInfo{}
@@ -125,6 +126,7 @@ func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"LatestBackupTime": latestBackupTime,
 		"LatestBackupAgo":  latestBackupAgo,
 		"RecentAudit":      recentAudit,
+		"ActionTimeline":   actionTimeline,
 		"ClashAPI":         clashAPI,
 		"PanelVersion":     prettyPanelVersion(a.PanelVersion),
 		"HostStats":        hostStats,
@@ -174,7 +176,8 @@ func (a *App) DashboardAPI(w http.ResponseWriter, r *http.Request) {
 	if configStatus == nil {
 		configStatus = &services.ConfigStatus{}
 	}
-	audits, _ := a.Audit.List(1)
+	audits, _ := a.Audit.List(20)
+	actionTimeline := summarizeActionTimeline(audits, 3)
 	clashAPI, _ := a.SingBox.ClashAPIInfo(r.Host)
 	if clashAPI == nil {
 		clashAPI = &services.ClashAPIInfo{}
@@ -212,6 +215,7 @@ func (a *App) DashboardAPI(w http.ResponseWriter, r *http.Request) {
 		"latestBackupTime": latestBackupTime,
 		"latestBackupAgo":  latestBackupAgo,
 		"recentAudit":      recentAudit,
+		"actionTimeline":   actionTimeline,
 		"clashAPI":         clashAPI,
 		"hostStats":        hostStats,
 	})
@@ -351,6 +355,30 @@ func summarizeSubscriptionUpdates(events []services.SubscriptionUpdateEvent) Das
 	}
 	if out.LastMessage == "" {
 		out.LastMessage = "-"
+	}
+	return out
+}
+
+func summarizeActionTimeline(items []services.AuditEntry, limit int) []services.AuditEntry {
+	if limit <= 0 {
+		limit = 3
+	}
+	if len(items) == 0 {
+		return []services.AuditEntry{}
+	}
+	out := make([]services.AuditEntry, 0, limit)
+	for _, it := range items {
+		a := strings.TrimSpace(it.Action)
+		if a == "" {
+			continue
+		}
+		if strings.HasPrefix(a, "dashboard.") || strings.HasPrefix(a, "auth.") {
+			continue
+		}
+		out = append(out, it)
+		if len(out) >= limit {
+			break
+		}
 	}
 	return out
 }

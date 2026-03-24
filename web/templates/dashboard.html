@@ -30,6 +30,9 @@
     <div id="health-issues" class="status-list"></div>
     <div class="divider"></div>
     <div id="health-suggestions" class="status-list"></div>
+    <div class="divider"></div>
+    <div><b>最近操作时间线</b></div>
+    <div id="action-timeline" class="status-list"><div class="muted">加载中...</div></div>
     <div class="actions">
       <button onclick="quickRestartSingbox()">重启 Sing-box</button>
       <button class="ghost" onclick="quickUpdateSubscription()">立即更新订阅</button>
@@ -154,6 +157,21 @@ async function quickRestartPanel() {
   setTimeout(() => window.location.reload(), 6000);
 }
 
+function renderActionTimeline(items) {
+  const wrap = document.getElementById('action-timeline');
+  if (!wrap) return;
+  const list = Array.isArray(items) ? items.slice(0, 3) : [];
+  if (!list.length) {
+    wrap.innerHTML = '<div class="muted">暂无操作记录</div>';
+    return;
+  }
+  wrap.innerHTML = list.map(it => {
+    const rs = (it.result || '').trim();
+    const cls = rs.includes('失败') || rs.includes('error') ? 'bad' : 'ok';
+    return `<div class="muted">• ${escapeHTML(it.time || '-')} · ${escapeHTML(it.action || '-')} · <span class="${cls}">${escapeHTML(rs || 'ok')}</span></div>`;
+  }).join('');
+}
+
 async function refreshDashboard() {
   const r = await fetch('/api/dashboard');
   const j = await r.json();
@@ -161,6 +179,7 @@ async function refreshDashboard() {
   if (j.mosdns) setServiceCard('md', j.mosdns);
   if (j.health) renderHealth(j.health);
   if (j.subDigest) renderSubDigest(j.subDigest);
+  if (j.actionTimeline) renderActionTimeline(j.actionTimeline);
   if (j.subEvents) renderSubEvents(j.subEvents);
   safeText('config-updated-at', j.updatedAt, '未知');
   if (j.configStatus) {
