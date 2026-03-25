@@ -188,6 +188,9 @@ async function saveSub() { const j = await postJSON('/api/singbox/subscription',
 async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview({keepEditor:true}); return j; }
 async function validateConfig() {
   const j = await postJSON('/api/singbox/config/validate', {config: getCurrentDraft()});
+  if (j && j.ok) {
+    renderConfigRisk(j.risk || null);
+  }
   if (j && !j.ok && j.error) {
     const lineMatch = String(j.error).match(/line\s*(\d+)/i) || String(j.error).match(/(\d+):(\d+)/);
     if (lineMatch) {
@@ -204,6 +207,23 @@ async function validateConfig() {
   }
   return j;
 }
+function renderConfigRisk(risk) {
+  const levelEl = document.getElementById('config-risk-level');
+  const summaryEl = document.getElementById('config-risk-summary');
+  const itemsEl = document.getElementById('config-risk-items');
+  if (!levelEl || !summaryEl || !itemsEl) return;
+  const level = (risk && risk.level) || 'ok';
+  levelEl.textContent = level === 'bad' ? '高风险' : (level === 'warn' ? '需确认' : '低风险');
+  levelEl.className = 'badge badge-plain ' + (level === 'bad' ? 'badge-bad' : (level === 'warn' ? 'badge-warn' : 'badge-ok'));
+  summaryEl.textContent = (risk && risk.summary) || '未发现明显高风险变更';
+  const items = (risk && Array.isArray(risk.items)) ? risk.items : [];
+  if (!items.length) {
+    itemsEl.innerHTML = '<div class="muted">暂无风险项</div>';
+    return;
+  }
+  itemsEl.innerHTML = items.map(x => '<div>• ' + escapeHTML(String(x || '')) + '</div>').join('');
+}
+
 async function saveConfig(restart) {
   const current = getCurrentDraft();
   if (serverChangedWhileDirty && !confirm('检测到服务器配置已变化。继续保存会以当前草稿覆盖服务器版本。确认继续？')) return;

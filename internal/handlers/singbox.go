@@ -124,7 +124,21 @@ func (a *App) SingBoxConfigValidateAPI(w http.ResponseWriter, r *http.Request) {
 		Config string `json:"config"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
-	respondOK(w, a.SingBox.ValidateConfig(in.Config))
+	if err := a.SingBox.ValidateConfig(in.Config); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	risk, err := a.SingBox.ConfigRiskReport(in.Config)
+	if err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"message": "配置校验通过",
+		"risk":    risk,
+	})
 }
 
 func (a *App) SingBoxConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
