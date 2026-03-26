@@ -62,6 +62,13 @@ function statusText(status) {
   if (status === 'error') return '失败';
   return status || '未执行';
 }
+function actionText(action) {
+  if (action === 'upgrade') return '内核升级';
+  if (action === 'rollback') return '内核回退';
+  if (action === 'update') return '订阅更新';
+  if (action === 'download') return '订阅下载';
+  return action || 'update';
+}
 function getConfigEl() {
   return document.getElementById('config');
 }
@@ -305,7 +312,7 @@ function renderUpdateEvents(list) {
   const el = document.getElementById('subscription-update-list');
   document.getElementById('sub-update-count').textContent = (list || []).length;
   if (!list || !list.length) { el.innerHTML = '<div class="muted empty-text">暂无更新执行记录</div>'; return; }
-  el.innerHTML = list.map(x => `<div class="backup-item backup-item-compact event-item event-${escapeHTML(x.status || 'info')}"><div><div class="backup-name">${escapeHTML(x.action || 'update')} · ${escapeHTML(x.message || '-')}</div><div class="muted">${escapeHTML(x.time || '')}${x.url ? ' · ' + escapeHTML(x.url) : ''}</div></div><span class="badge badge-plain ${(x.status === 'ok') ? 'badge-ok' : 'badge-bad'}">${escapeHTML(statusText(x.status))}</span></div>`).join('');
+  el.innerHTML = list.map(x => `<div class="backup-item backup-item-compact event-item event-${escapeHTML(x.status || 'info')}"><div><div class="backup-name">${escapeHTML(actionText(x.action))} · ${escapeHTML(x.message || '-')}</div><div class="muted">${escapeHTML(x.time || '')}${x.url ? ' · ' + escapeHTML(x.url) : ''}</div></div><span class="badge badge-plain ${(x.status === 'ok') ? 'badge-ok' : 'badge-bad'}">${escapeHTML(statusText(x.status))}</span></div>`).join('');
 }
 function renderBackups(list, status) {
   const el = document.getElementById('backup-list');
