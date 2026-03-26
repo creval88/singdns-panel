@@ -409,30 +409,47 @@ func (s *SingBoxService) ConfigUpdatedAt() (string, error) {
 }
 
 func (s *SingBoxService) Upgrade() error {
+	startedAt := time.Now()
 	latestVer, err := s.LatestVersion()
 	if err != nil {
 		if s.cfg.CtlPath != "" {
 			_, ctlErr := utils.Run(120*time.Second, "sudo", s.cfg.CtlPath, "upgrade")
-			return ctlErr
+			if ctlErr != nil {
+				s.logCoreEvent("error", "upgrade", "latest-version", fmt.Sprintf("获取最新版本失败，fallback ctl 也失败: %v", ctlErr), time.Since(startedAt))
+				return ctlErr
+			}
+			s.logCoreEvent("ok", "upgrade", "ctl-fallback", "已通过 ctl fallback 完成内核升级", time.Since(startedAt))
+			return nil
 		}
+		s.logCoreEvent("error", "upgrade", "latest-version", err.Error(), time.Since(startedAt))
 		return err
 	}
 	if latestVer == "" {
-		return fmt.Errorf("failed to get latest version")
+		err := fmt.Errorf("failed to get latest version")
+		s.logCoreEvent("error", "upgrade", "latest-version", err.Error(), time.Since(startedAt))
+		return err
 	}
 
 	archVal, err := singboxArchForHost()
 	if err != nil {
 		if s.cfg.CtlPath != "" {
 			_, ctlErr := utils.Run(120*time.Second, "sudo", s.cfg.CtlPath, "upgrade")
-			return ctlErr
+			if ctlErr != nil {
+				s.logCoreEvent("error", "upgrade", "arch", fmt.Sprintf("识别架构失败，fallback ctl 也失败: %v", ctlErr), time.Since(startedAt))
+				return ctlErr
+			}
+			s.logCoreEvent("ok", "upgrade", "ctl-fallback", "识别架构失败，已通过 ctl fallback 完成升级", time.Since(startedAt))
+			return nil
 		}
+		s.logCoreEvent("error", "upgrade", "arch", err.Error(), time.Since(startedAt))
 		return err
 	}
 
 	rollbackBin, err := s.prepareCoreRollbackBinary()
 	if err != nil {
-		return fmt.Errorf("升级前备份当前内核失败: %w", err)
+		err = fmt.Errorf("升级前备份当前内核失败: %w", err)
+		s.logCoreEvent("error", "upgrade", "prepare-rollback", err.Error(), time.Since(startedAt))
+		return err
 	}
 
 	verNum := strings.TrimPrefix(latestVer, "v")
@@ -440,6 +457,7 @@ func (s *SingBoxService) Upgrade() error {
 
 	tmpTar, err := os.CreateTemp("", "sing-box-*.tar.gz")
 	if err != nil {
+		s.logCoreEvent("error", "upgrade", "prepare-download", err.Error(), time.Since(startedAt))
 		return err
 	}
 	tmpTarPath := tmpTar.Name()
@@ -449,8 +467,14 @@ func (s *SingBoxService) Upgrade() error {
 	if err := downloadFile(downloadURL, tmpTarPath, 2*time.Minute); err != nil {
 		if s.cfg.CtlPath != "" {
 			_, ctlErr := utils.Run(120*time.Second, "sudo", s.cfg.CtlPath, "upgrade")
-			return ctlErr
+			if ctlErr != nil {
+				s.logCoreEvent("error", "upgrade", "download", fmt.Sprintf("下载失败，fallback ctl 也失败: %v", ctlErr), time.Since(startedAt))
+				return ctlErr
+			}
+			s.logCoreEvent("ok", "upgrade", "ctl-fallback", "下载失败，已通过 ctl fallback 完成升级", time.Since(startedAt))
+			return nil
 		}
+		s.logCoreEvent("error", "upgrade", "download", err.Error(), time.Since(startedAt))
 		return err
 	}
 
@@ -458,8 +482,14 @@ func (s *SingBoxService) Upgrade() error {
 	if err != nil {
 		if s.cfg.CtlPath != "" {
 			_, ctlErr := utils.Run(120*time.Second, "sudo", s.cfg.CtlPath, "upgrade")
-			return ctlErr
+			if ctlErr != nil {
+				s.logCoreEvent("error", "upgrade", "extract", fmt.Sprintf("解包失败，fallback ctl 也失败: %v", ctlErr), time.Since(startedAt))
+				return ctlErr
+			}
+			s.logCoreEvent("ok", "upgrade", "ctl-fallback", "解包失败，已通过 ctl fallback 完成升级", time.Since(startedAt))
+			return nil
 		}
+		s.logCoreEvent("error", "upgrade", "extract", err.Error(), time.Since(startedAt))
 		return err
 	}
 	defer os.Remove(binPath)
@@ -467,31 +497,52 @@ func (s *SingBoxService) Upgrade() error {
 	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
 	_, _ = utils.Run(10*time.Second, "sudo", "mkdir", "-p", filepath.Dir(s.cfg.BinPath))
 	if err := s.installCoreBinary(binPath); err != nil {
+		s.logCoreEvent("error", "upgrade", "install", err.Error(), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			s.logCoreEvent("ok", "rollback", "auto", "升级安装失败，已自动回退到升级前版本", time.Since(startedAt))
 			return fmt.Errorf("安装新内核失败，已自动回退到升级前版本: %w", err)
 		} else {
+			s.logCoreEvent("error", "rollback", "auto", fmt.Sprintf("升级安装失败，自动回退失败: %v", rbErr), time.Since(startedAt))
 			return fmt.Errorf("安装新内核失败，且自动回退失败: install_err=%v, rollback_err=%v", err, rbErr)
 		}
 	}
 	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
+		s.logCoreEvent("error", "upgrade", "start", err.Error(), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			s.logCoreEvent("ok", "rollback", "auto", "新内核启动失败，已自动回退到升级前版本", time.Since(startedAt))
 			return fmt.Errorf("新内核启动失败，已自动回退到升级前版本: %w", err)
 		} else {
+			s.logCoreEvent("error", "rollback", "auto", fmt.Sprintf("新内核启动失败，自动回退失败: %v", rbErr), time.Since(startedAt))
 			return fmt.Errorf("新内核启动失败，且自动回退失败: start_err=%v, rollback_err=%v", err, rbErr)
 		}
 	}
 	if err := s.verifyCoreVersion(); err != nil {
+		s.logCoreEvent("error", "upgrade", "verify", err.Error(), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			s.logCoreEvent("ok", "rollback", "auto", "新内核校验失败，已自动回退到升级前版本", time.Since(startedAt))
 			return fmt.Errorf("新内核版本校验失败，已自动回退到升级前版本: %w", err)
 		} else {
+			s.logCoreEvent("error", "rollback", "auto", fmt.Sprintf("新内核校验失败，自动回退失败: %v", rbErr), time.Since(startedAt))
 			return fmt.Errorf("新内核版本校验失败，且自动回退失败: verify_err=%v, rollback_err=%v", err, rbErr)
 		}
 	}
+	s.logCoreEvent("ok", "upgrade", "complete", fmt.Sprintf("Sing-box 核心已升级到 %s", latestVer), time.Since(startedAt))
 	return nil
 }
 
 func (s *SingBoxService) RollbackCoreUpgrade() error {
-	return s.rollbackCoreFromBinary(s.coreRollbackBinaryPath())
+	startedAt := time.Now()
+	err := s.rollbackCoreFromBinary(s.coreRollbackBinaryPath())
+	if err != nil {
+		s.logCoreEvent("error", "rollback", "manual", err.Error(), time.Since(startedAt))
+		return err
+	}
+	s.logCoreEvent("ok", "rollback", "manual", "已手动回退到最近一次升级前内核", time.Since(startedAt))
+	return nil
+}
+
+func (s *SingBoxService) logCoreEvent(status, action, stage, message string, duration time.Duration) {
+	s.AppendSubscriptionUpdateEventDetailed(status, action, stage, "", message, duration)
 }
 
 func (s *SingBoxService) coreRollbackBinaryPath() string {
