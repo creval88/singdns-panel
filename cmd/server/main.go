@@ -129,6 +129,7 @@ func main() {
 		pr.Post("/api/singbox/subscription/update", app.SingBoxSubscriptionUpdateAPI)
 		pr.Get("/api/singbox/version", app.SingBoxVersionAPI)
 		pr.Post("/api/singbox/upgrade", app.SingBoxUpgradeAPI)
+		pr.Post("/api/singbox/upgrade/rollback", app.SingBoxUpgradeRollbackAPI)
 		pr.Get("/api/singbox/cron", app.SingBoxCronGetAPI)
 		pr.Post("/api/singbox/cron", app.SingBoxCronSetAPI)
 		pr.Delete("/api/singbox/cron", app.SingBoxCronDeleteAPI)

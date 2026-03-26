@@ -430,6 +430,11 @@ func (s *SingBoxService) Upgrade() error {
 		return err
 	}
 
+	rollbackBin, err := s.prepareCoreRollbackBinary()
+	if err != nil {
+		return fmt.Errorf("升级前备份当前内核失败: %w", err)
+	}
+
 	verNum := strings.TrimPrefix(latestVer, "v")
 	downloadURL := fmt.Sprintf("https://github.com/SagerNet/sing-box/releases/download/%s/sing-box-%s-linux-%s.tar.gz", latestVer, verNum, archVal)
 
@@ -459,32 +464,135 @@ func (s *SingBoxService) Upgrade() error {
 	}
 	defer os.Remove(binPath)
 
-	// 平滑停启
 	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
 	_, _ = utils.Run(10*time.Second, "sudo", "mkdir", "-p", filepath.Dir(s.cfg.BinPath))
-	if res, err := utils.Run(30*time.Second, "sudo", "install", "-m", "755", binPath, s.cfg.BinPath); err != nil {
-		if s.cfg.CtlPath != "" {
-			if _, ctlErr := utils.Run(120*time.Second, "sudo", s.cfg.CtlPath, "upgrade"); ctlErr == nil {
-				return nil
-			}
+	if err := s.installCoreBinary(binPath); err != nil {
+		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			return fmt.Errorf("安装新内核失败，已自动回退到升级前版本: %w", err)
+		} else {
+			return fmt.Errorf("安装新内核失败，且自动回退失败: install_err=%v, rollback_err=%v", err, rbErr)
 		}
-		msg := strings.TrimSpace(res.Stderr)
-		if msg == "" {
-			msg = strings.TrimSpace(res.Stdout)
+	}
+	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
+		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			return fmt.Errorf("新内核启动失败，已自动回退到升级前版本: %w", err)
+		} else {
+			return fmt.Errorf("新内核启动失败，且自动回退失败: start_err=%v, rollback_err=%v", err, rbErr)
 		}
-		return fmt.Errorf("安装新内核失败（目标 %s）: %v, detail=%s", s.cfg.BinPath, err, msg)
+	}
+	if err := s.verifyCoreVersion(); err != nil {
+		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			return fmt.Errorf("新内核版本校验失败，已自动回退到升级前版本: %w", err)
+		} else {
+			return fmt.Errorf("新内核版本校验失败，且自动回退失败: verify_err=%v, rollback_err=%v", err, rbErr)
+		}
+	}
+	return nil
+}
+
+func (s *SingBoxService) RollbackCoreUpgrade() error {
+	return s.rollbackCoreFromBinary(s.coreRollbackBinaryPath())
+}
+
+func (s *SingBoxService) coreRollbackBinaryPath() string {
+	return filepath.Join(os.TempDir(), "sing-box-bin-last-good")
+}
+
+func (s *SingBoxService) prepareCoreRollbackBinary() (string, error) {
+	backupBin, err := copyFileToTempWithPattern(s.cfg.BinPath, os.TempDir(), "sing-box-bin-prev-*")
+	if err != nil {
+		return "", err
+	}
+	if err := copyFile(backupBin, s.coreRollbackBinaryPath(), 0755); err != nil {
+		return "", err
+	}
+	return backupBin, nil
+}
+
+func (s *SingBoxService) installCoreBinary(binPath string) error {
+	res, err := utils.Run(30*time.Second, "sudo", "install", "-m", "755", binPath, s.cfg.BinPath)
+	if err == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(res.Stderr)
+	if msg == "" {
+		msg = strings.TrimSpace(res.Stdout)
+	}
+	if msg == "" {
+		msg = err.Error()
+	}
+	return fmt.Errorf("安装内核失败（目标 %s）: %s", s.cfg.BinPath, msg)
+}
+
+func (s *SingBoxService) rollbackCoreFromBinary(binPath string) error {
+	if strings.TrimSpace(binPath) == "" {
+		return fmt.Errorf("回退失败：缺少回退二进制路径")
+	}
+	if st, err := os.Stat(binPath); err != nil || st.Size() == 0 {
+		if err != nil {
+			return fmt.Errorf("回退失败：未找到可用备份 %s: %w", binPath, err)
+		}
+		return fmt.Errorf("回退失败：备份文件为空 %s", binPath)
+	}
+	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
+	if err := s.installCoreBinary(binPath); err != nil {
+		return err
 	}
 	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
 		return err
 	}
-	// 优先直接执行版本检查，避免依赖 sudoers 额外放行 /usr/local/bin/sing-box version
-	if _, err := utils.Run(10*time.Second, s.cfg.BinPath, "version"); err != nil {
-		// 兼容旧环境：若二进制权限异常，再尝试 sudo
-		if _, err2 := utils.Run(10*time.Second, "sudo", s.cfg.BinPath, "version"); err2 != nil {
-			return err
-		}
+	if err := s.verifyCoreVersion(); err != nil {
+		return err
 	}
 	return nil
+}
+
+func (s *SingBoxService) verifyCoreVersion() error {
+	if _, err := utils.Run(10*time.Second, s.cfg.BinPath, "version"); err == nil {
+		return nil
+	}
+	if _, err := utils.Run(10*time.Second, "sudo", s.cfg.BinPath, "version"); err == nil {
+		return nil
+	}
+	return fmt.Errorf("version check failed")
+}
+
+func copyFileToTempWithPattern(srcPath, dir, pattern string) (string, error) {
+	tmp, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	if err := copyFile(srcPath, tmpPath, 0755); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	return tmpPath, nil
+}
+
+func copyFile(srcPath, dstPath string, mode os.FileMode) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	if mode == 0 {
+		mode = 0644
+	}
+	return os.Chmod(dstPath, mode)
 }
 
 func (s *SingBoxService) CronShow() (*CronInfo, error) {

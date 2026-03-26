@@ -262,6 +262,11 @@ async function upgradeCore() {
     if (j.ok) await refreshSingboxOverview();
   }
 }
+async function upgradeCoreRollback() {
+  if (!confirm('确认回退 Sing-box 内核到升级前版本？\n\n会执行：停止服务 → 替换为最近一次升级前备份内核 → 启动服务。')) return;
+  const j = await postJSON('/api/singbox/upgrade/rollback');
+  if (j.ok) await refreshSingboxOverview();
+}
 async function saveCron() { const days = Number(document.getElementById('cron-days').value || 0); const hour = Number(document.getElementById('cron-hour').value || 0); const j = await postJSON('/api/singbox/cron', {days, hour}); if (j.ok) await refreshSingboxOverview(); }
 async function deleteCron() { if (!confirm('确认删除定时更新任务？')) return; const j = await fetchDelete('/api/singbox/cron'); if (j.ok) await refreshSingboxOverview(); }
 async function previewBackupDiff(name) {

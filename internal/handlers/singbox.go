@@ -196,6 +196,13 @@ func (a *App) SingBoxUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 	a.auditFromRequest(r, "singbox.upgrade", err)
 	respondMessage(w, err, "Sing-box 核心已更新")
 }
+
+func (a *App) SingBoxUpgradeRollbackAPI(w http.ResponseWriter, r *http.Request) {
+	err := a.SingBox.RollbackCoreUpgrade()
+	a.auditFromRequest(r, "singbox.upgrade.rollback", err)
+	respondMessage(w, err, "Sing-box 核心已回退到升级前版本")
+}
+
 func (a *App) SingBoxCronGetAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(must(a.SingBox.CronShow()))
 }
