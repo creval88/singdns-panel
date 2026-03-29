@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -14,6 +15,14 @@ type CommandResult struct {
 }
 
 func RunWithDir(timeout time.Duration, dir string, name string, args ...string) (*CommandResult, error) {
+	if name == "sudo" && os.Geteuid() == 0 {
+		if len(args) == 0 {
+			return &CommandResult{}, fmt.Errorf("run sudo []: missing command")
+		}
+		name = args[0]
+		args = args[1:]
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)

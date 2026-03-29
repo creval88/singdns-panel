@@ -215,19 +215,7 @@ func (s *SingBoxService) UpdateSubscription() (*OperationResult, error) {
 }
 
 func (s *SingBoxService) UpdateSubscriptionFromURL(rawURL string) (*OperationResult, error) {
-	startedAt := time.Now()
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		err := fmt.Errorf("subscription url is empty")
-		s.AppendSubscriptionUpdateEventDetailed("error", "update", "validate-url", rawURL, err.Error(), time.Since(startedAt))
-		return nil, err
-	}
-	s.AppendSubscriptionUpdateEventDetailed("info", "update", "start", rawURL, "开始执行订阅更新", 0)
-	content, err := s.DownloadSubscription(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	return s.ApplySubscriptionContent(rawURL, content, startedAt)
+	return s.ImportSubscriptionFromURL(rawURL)
 }
 
 func (s *SingBoxService) DownloadSubscription(rawURL string) (string, error) {

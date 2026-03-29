@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -53,6 +54,41 @@ func main() {
 				log.Fatal(err)
 			}
 			log.Printf("subscription update completed")
+			return
+		case "subscription-import":
+			rawURL := ""
+			if len(os.Args) > 2 {
+				rawURL = os.Args[2]
+			}
+			if len(os.Args) > 3 {
+				cfgPath = os.Args[3]
+			}
+			cfg, err := cfgpkg.Load(cfgPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			systemd := services.NewSystemdService()
+			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
+			if strings.TrimSpace(rawURL) == "" {
+				rawURL, err = singbox.ReadSubscriptionURL()
+				if err != nil {
+					log.Fatal(err)
+				}
+			} else {
+				if _, err := singbox.SaveSubscriptionURL(rawURL); err != nil {
+					log.Fatal(err)
+				}
+			}
+			log.Printf("subscription import target config: %s", cfg.Services.SingBox.ConfigPath)
+			res, err := singbox.ImportSubscriptionFromURL(rawURL)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if res != nil {
+				log.Printf("subscription import completed: %s", res.Message)
+			} else {
+				log.Printf("subscription import completed")
+			}
 			return
 		}
 	}
@@ -121,7 +157,10 @@ func main() {
 		pr.Get("/api/singbox/overview", app.SingBoxOverviewAPI)
 		pr.Get("/api/singbox/status", app.SingBoxStatusAPI)
 		pr.Get("/api/singbox/config", app.SingBoxConfigAPI)
+		pr.Get("/api/singbox/template/config", app.SingBoxTemplateConfigAPI)
 		pr.Post("/api/singbox/action/{action}", app.SingBoxActionAPI)
+		pr.Post("/api/singbox/template/config/validate", app.SingBoxTemplateConfigValidateAPI)
+		pr.Post("/api/singbox/template/config/save", app.SingBoxTemplateConfigSaveAPI)
 		pr.Post("/api/singbox/config/validate", app.SingBoxConfigValidateAPI)
 		pr.Post("/api/singbox/config/save", app.SingBoxConfigSaveAPI)
 		pr.Get("/api/singbox/subscription", app.SingBoxSubscriptionAPI)

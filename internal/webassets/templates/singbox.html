@@ -48,10 +48,6 @@
 
 <script src="/static/app.js?v=20260318-hotfix7"></script>
 <script>
-const draftKey = 'singdns-panel:singbox:draft';
-let lastServerConfig = document.getElementById('config') ? document.getElementById('config').value : '';
-let serverChangedWhileDirty = false;
-
 function showSbTab(name, btn) {
   document.querySelectorAll('.sb-tab').forEach(x => x.classList.toggle('active', x.dataset.tab === name));
   document.querySelectorAll('#singbox-tabs .tab').forEach(x => x.classList.remove('active'));
@@ -69,184 +65,64 @@ function actionText(action) {
   if (action === 'download') return '订阅下载';
   return action || 'update';
 }
-function getConfigEl() {
-  return document.getElementById('config');
-}
-function getCurrentDraft() {
-  const el = getConfigEl();
-  return el ? el.value : '';
-}
-function isDirtyDraft() {
-  return getCurrentDraft() !== lastServerConfig;
-}
-function persistLocalDraft() {
-  try {
-    const draft = getCurrentDraft();
-    if (!draft || draft === lastServerConfig) {
-      localStorage.removeItem(draftKey);
-      return;
-    }
-    localStorage.setItem(draftKey, draft);
-  } catch (_) {}
-}
-function restoreLocalDraft() {
-  const el = getConfigEl();
+
+function getTemplateEl() { return document.getElementById('template-config'); }
+function getConfigEl() { return document.getElementById('config'); }
+
+function formatTemplateConfig() {
+  const el = getTemplateEl();
   if (!el) return;
   try {
-    const saved = localStorage.getItem(draftKey);
-    if (saved && saved !== lastServerConfig) {
-      el.value = saved;
-      toast('已恢复浏览器本地草稿');
-    }
-  } catch (_) {}
-}
-function resetLocalDraft() {
-  const el = getConfigEl();
-  if (!el) return;
-  if (!confirm('确认丢弃浏览器本地草稿并恢复到服务器当前配置？')) return;
-  el.value = lastServerConfig;
-  serverChangedWhileDirty = false;
-  persistLocalDraft();
-  updateConfigDirtyState();
-  renderDraftDiff();
-  toast('已丢弃本地草稿');
-}
-function updateConfigDirtyState() {
-  const dirtyBox = document.getElementById('config-dirty-state');
-  const conflictBox = document.getElementById('config-conflict-state');
-  if (dirtyBox) {
-    const dirty = isDirtyDraft();
-    dirtyBox.textContent = dirty ? '本地草稿未保存' : '已与服务器同步';
-    dirtyBox.className = dirty ? 'warn-text' : 'ok';
-  }
-  if (conflictBox) {
-    if (serverChangedWhileDirty) {
-      conflictBox.textContent = '检测到服务器配置已变化，本地草稿可能覆盖远端新改动';
-      conflictBox.className = 'bad';
-    } else {
-      conflictBox.textContent = '无';
-      conflictBox.className = '';
-    }
-  }
-  persistLocalDraft();
-}
-function buildDiffLines(a, b) {
-  const left = String(a || '').replace(/\r/g, '').split('\n');
-  const right = String(b || '').replace(/\r/g, '').split('\n');
-  const max = Math.max(left.length, right.length);
-  const lines = [];
-  let changed = 0;
-  for (let i = 0; i < max; i++) {
-    const l = left[i];
-    const r = right[i];
-    if (l === r) continue;
-    changed++;
-    if (typeof l !== 'undefined') lines.push('- ' + l);
-    if (typeof r !== 'undefined') lines.push('+ ' + r);
-    if (lines.length >= 160) break;
-  }
-  return { changed, text: lines.length ? lines.join('\n') : '暂无差异' };
-}
-function renderDraftDiff() {
-  const summary = document.getElementById('config-diff-summary');
-  const preview = document.getElementById('config-diff-preview');
-  const hint = document.getElementById('config-diff-hint');
-  if (!summary || !preview || !hint) return;
-  const diff = buildDiffLines(lastServerConfig, getCurrentDraft());
-  if (diff.changed === 0) {
-    summary.textContent = '无差异';
-    summary.className = 'muted';
-    hint.textContent = serverChangedWhileDirty ? '服务器配置已变化，但当前编辑器内容已经与服务器同步。' : '这里显示浏览器本地草稿与服务器当前配置的差异预览。';
-    preview.textContent = '暂无差异';
-    return;
-  }
-  summary.textContent = '共 ' + diff.changed + ' 处差异' + (diff.changed > 160 ? '（已截断）' : '');
-  summary.className = serverChangedWhileDirty ? 'bad' : 'warn-text';
-  hint.textContent = serverChangedWhileDirty ? '冲突提示：服务器配置在你编辑期间变了。保存前先确认右侧 diff。' : '仅本地草稿有改动，尚未保存到服务器。';
-  preview.textContent = diff.text;
-}
-function formatConfig() {
-  try {
-    const el = getConfigEl();
     const v = JSON.parse(el.value);
     el.value = JSON.stringify(v, null, 2);
-    updateConfigDirtyState();
-    renderDraftDiff();
-    toast('JSON 已格式化');
-  } catch (e) {
-    toast('JSON 格式错误，无法格式化', false);
+    toast('模版 JSON 已格式化');
+  } catch (_) {
+    toast('模版 JSON 格式错误，无法格式化', false);
   }
 }
-function syncConfigFromServer() {
-  const el = getConfigEl();
+
+async function validateTemplateConfig() {
+  const el = getTemplateEl();
   if (!el) return;
-  if (isDirtyDraft() && !confirm('本地草稿有未保存修改，确认用服务器版本覆盖？')) return;
-  refreshSingboxOverview({keepEditor:false, preferServer:true});
-  toast('已从服务器同步配置');
+  return await postJSON('/api/singbox/template/config/validate', { config: el.value });
 }
+
+async function saveTemplateConfig() {
+  const el = getTemplateEl();
+  if (!el) return;
+  const j = await postJSON('/api/singbox/template/config/save', { config: el.value });
+  if (j && j.ok) {
+    await refreshSingboxOverview();
+  }
+  return j;
+}
+
+function syncConfigFromServer() {
+  refreshSingboxOverview();
+  toast('已刷新完整配置');
+}
+
 function confirmStopSingbox() {
   if (confirm('确认停止 Sing-box？停止后代理转发会中断。')) runSingboxAction('stop');
 }
 function confirmUpdateSub() {
-  if (confirm('确认立即更新订阅？\n\n将执行：下载新配置 → 校验 → 自动备份当前配置 → 覆盖配置 → 重启 Sing-box。')) updateSubscription();
+  if (confirm('确认立即更新订阅？\n\n将执行：拉取订阅节点 → 按模版规则筛选/展开 → 校验 → 自动备份当前完整配置 → 覆盖配置 → 重启 Sing-box。')) updateSubscription();
 }
 async function runSingboxAction(action) { const j = await api('/api/singbox/action/' + action); if (j.ok) await refreshSingboxOverview(); }
 async function saveSub() { const j = await postJSON('/api/singbox/subscription', {url: document.getElementById('suburl').value}); if (j.ok) await refreshSingboxOverview(); }
-async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview({keepEditor:true}); return j; }
+async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview(); return j; }
+
 async function validateConfig() {
-  const j = await postJSON('/api/singbox/config/validate', {config: getCurrentDraft()});
-  if (j && j.ok) {
-    renderConfigRisk(j.risk || null);
-  }
-  if (j && !j.ok && j.error) {
-    const lineMatch = String(j.error).match(/line\s*(\d+)/i) || String(j.error).match(/(\d+):(\d+)/);
-    if (lineMatch) {
-      const lineNo = Number(lineMatch[1]);
-      const el = getConfigEl();
-      if (el && lineNo > 0) {
-        const lines = el.value.replace(/\r/g, '').split('\n');
-        let pos = 0;
-        for (let i = 0; i < lineNo - 1 && i < lines.length; i++) pos += lines[i].length + 1;
-        el.focus();
-        el.setSelectionRange(pos, Math.min(pos + (lines[lineNo - 1] || '').length, el.value.length));
-      }
-    }
-  }
-  return j;
-}
-function renderConfigRisk(risk) {
-  const levelEl = document.getElementById('config-risk-level');
-  const summaryEl = document.getElementById('config-risk-summary');
-  const itemsEl = document.getElementById('config-risk-items');
-  if (!levelEl || !summaryEl || !itemsEl) return;
-  const level = (risk && risk.level) || 'ok';
-  levelEl.textContent = level === 'bad' ? '高风险' : (level === 'warn' ? '需确认' : '低风险');
-  levelEl.className = 'badge badge-plain ' + (level === 'bad' ? 'badge-bad' : (level === 'warn' ? 'badge-warn' : 'badge-ok'));
-  summaryEl.textContent = (risk && risk.summary) || '未发现明显高风险变更';
-  const items = (risk && Array.isArray(risk.items)) ? risk.items : [];
-  if (!items.length) {
-    itemsEl.innerHTML = '<div class="muted">暂无风险项</div>';
-    return;
-  }
-  itemsEl.innerHTML = items.map(x => '<div>• ' + escapeHTML(String(x || '')) + '</div>').join('');
+  const el = getConfigEl();
+  if (!el) return;
+  return await postJSON('/api/singbox/config/validate', {config: el.value});
 }
 
-async function saveConfig(restart) {
-  const current = getCurrentDraft();
-  if (serverChangedWhileDirty && !confirm('检测到服务器配置已变化。继续保存会以当前草稿覆盖服务器版本。确认继续？')) return;
-  const j = await postJSON('/api/singbox/config/save', {config: current, restart});
-  if (j.ok) {
-    serverChangedWhileDirty = false;
-    try { localStorage.removeItem(draftKey); } catch (_) {}
-    await refreshSingboxOverview({keepEditor:true, forceConfig:current});
-  }
-}
 async function createBackup() {
   const j = await postJSON('/api/singbox/backups/create');
   if (j.ok) {
-    // 有时文件系统时间戳/目录刷新会有轻微延迟，做一次短延时二次刷新，避免“需手动F5才看到”
-    await refreshSingboxOverview({keepEditor:true});
-    setTimeout(() => refreshSingboxOverview({keepEditor:true}), 500);
+    await refreshSingboxOverview();
+    setTimeout(() => refreshSingboxOverview(), 500);
   }
 }
 async function quickRollbackLatestBackup() {
@@ -276,6 +152,7 @@ async function upgradeCoreRollback() {
 }
 async function saveCron() { const days = Number(document.getElementById('cron-days').value || 0); const hour = Number(document.getElementById('cron-hour').value || 0); const j = await postJSON('/api/singbox/cron', {days, hour}); if (j.ok) await refreshSingboxOverview(); }
 async function deleteCron() { if (!confirm('确认删除定时更新任务？')) return; const j = await fetchDelete('/api/singbox/cron'); if (j.ok) await refreshSingboxOverview(); }
+
 async function previewBackupDiff(name) {
   const r = await fetch('/api/singbox/backups/diff?name=' + encodeURIComponent(name));
   const j = await r.json();
@@ -294,14 +171,16 @@ async function restoreBackup(name) {
 async function deleteBackup(name) {
   if (!confirm('确认删除备份：' + name + ' ？此操作不可恢复。')) return;
   const j = await postJSON('/api/singbox/backups/delete', {name});
-  if (j.ok) await refreshSingboxOverview({keepEditor:true});
+  if (j.ok) await refreshSingboxOverview();
 }
+
 function loadClashFrame(){
   const wrap=document.getElementById('clash-frame-wrap');
   if(!wrap || wrap.dataset.loaded==='1') return;
   wrap.dataset.loaded='1';
   wrap.innerHTML='<iframe class="mosdns-frame" src="{{.ClashAPI.URL}}"></iframe>';
 }
+
 function renderHistory(list) {
   const el = document.getElementById('subscription-history-list');
   document.getElementById('sub-history-count').textContent = (list || []).length;
@@ -323,8 +202,8 @@ function renderBackups(list, status) {
   if (!list || !list.length) { el.innerHTML = '<div class="muted empty-text">暂无备份</div>'; return; }
   el.innerHTML = list.map(x => `<div class="backup-item ${x.is_latest ? 'backup-item-latest' : ''} ${x.is_current ? 'backup-item-current' : ''}"><div><div class="backup-name">${escapeHTML(x.name || '')}</div><div class="muted">${escapeHTML(x.mod_time || '')} · ${escapeHTML(x.size_text || '')} · ${escapeHTML(x.age_text || '')}${x.is_latest ? ' · 最新' : ''}${x.is_current ? ' · 与当前配置一致' : ''}</div></div><div class="actions toolbar-slim"><button class="ghost" onclick="previewBackupDiff('${escapeJS(x.name || '')}')">查看差异</button><button onclick="restoreBackup('${escapeJS(x.name || '')}')">回滚</button><button class="warn" onclick="deleteBackup('${escapeJS(x.name || '')}')">删除</button></div></div>`).join('');
 }
-function applyOverview(data, opts) {
-  opts = opts || {};
+
+function applyOverview(data) {
   const $ = (id) => document.getElementById(id);
   const setText = (id, v) => { const el = $(id); if (el) el.textContent = (v ?? ''); };
   const setHTML = (id, v) => { const el = $(id); if (el) el.innerHTML = (v ?? ''); };
@@ -386,27 +265,15 @@ function applyOverview(data, opts) {
   renderUpdateEvents(data.updateEvents || []);
   renderBackups(data.backups || [], data.backupStatus || null);
 
-  const incomingServerConfig = data.config || '';
-  if (!opts.keepEditor || opts.preferServer) {
-    setVal('config', (typeof opts.forceConfig === 'string') ? opts.forceConfig : incomingServerConfig);
-  }
-
-  if (incomingServerConfig !== lastServerConfig && isDirtyDraft()) {
-    serverChangedWhileDirty = true;
-  }
-  if (typeof opts.forceConfig === 'string') {
-    lastServerConfig = opts.forceConfig;
-  } else if (!opts.keepEditor || opts.preferServer || !isDirtyDraft()) {
-    lastServerConfig = incomingServerConfig;
-    if (!isDirtyDraft()) serverChangedWhileDirty = false;
-  }
-  updateConfigDirtyState();
-  renderDraftDiff();
+  // 完整配置只读展示
+  setVal('config', data.config || '');
+  setVal('template-config', data.templateConfig || '');
 }
-async function refreshSingboxOverview(opts) {
+
+async function refreshSingboxOverview() {
   const r = await fetch('/api/singbox/overview?_=' + Date.now(), { cache: 'no-store' });
   const j = await r.json();
-  applyOverview(j, opts);
+  applyOverview(j);
 }
 function startManagedPolling(fn, ms){
   let timer=null;
@@ -415,15 +282,7 @@ function startManagedPolling(fn, ms){
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fn(); });
   reset();
 }
-const configEl = document.getElementById('config');
-if (configEl) {
-  configEl.addEventListener('input', function() {
-    updateConfigDirtyState();
-    renderDraftDiff();
-  });
-}
-restoreLocalDraft();
-updateConfigDirtyState();
-renderDraftDiff();
-startManagedPolling(function(){ refreshSingboxOverview({keepEditor:true}); }, 5000);
-</script></main></div></body></html>
+
+startManagedPolling(function(){ refreshSingboxOverview(); }, 5000);
+</script>
+</main></div></body></html>

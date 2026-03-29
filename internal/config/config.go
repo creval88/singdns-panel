@@ -26,11 +26,12 @@ type Services struct {
 }
 
 type ServiceConfig struct {
-	ServiceName string `json:"service_name"`
-	ConfigPath  string `json:"config_path"`
-	URLPath     string `json:"url_path"`
-	BinPath     string `json:"bin_path"`
-	CtlPath     string `json:"ctl_path"`
+	ServiceName  string `json:"service_name"`
+	ConfigPath   string `json:"config_path"`
+	TemplatePath string `json:"template_path"`
+	URLPath      string `json:"url_path"`
+	BinPath      string `json:"bin_path"`
+	CtlPath      string `json:"ctl_path"`
 }
 
 type MosDNSConfig struct {

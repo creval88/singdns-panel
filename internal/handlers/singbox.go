@@ -24,6 +24,7 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		status = &svc.ServiceStatus{Name: "sing-box"}
 	}
 	config, _ := a.SingBox.ReadConfig()
+	templateConfig, _ := a.SingBox.ReadTemplateConfig()
 	url, _ := a.SingBox.ReadSubscriptionURL()
 	subscription, _ := a.SingBox.SubscriptionStatus()
 	if subscription == nil {
@@ -64,6 +65,7 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 	return map[string]any{
 		"Status":        status,
 		"Config":        config,
+		"TemplateConfig": templateConfig,
 		"URL":           url,
 		"Subscription":  subscription,
 		"Cron":          cron,
@@ -81,6 +83,7 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 
 		"status":        status,
 		"config":        config,
+		"templateConfig": templateConfig,
 		"url":           url,
 		"subscription":  subscription,
 		"cron":          cron,
@@ -111,12 +114,38 @@ func (a *App) SingBoxStatusAPI(w http.ResponseWriter, r *http.Request) {
 func (a *App) SingBoxConfigAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"config": mustStr(a.SingBox.ReadConfig())})
 }
+
+func (a *App) SingBoxTemplateConfigAPI(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(map[string]string{"config": mustStr(a.SingBox.ReadTemplateConfig())})
+}
 func (a *App) SingBoxSubscriptionAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"url": mustStr(a.SingBox.ReadSubscriptionURL())})
 }
 
 func (a *App) SingBoxActionAPI(w http.ResponseWriter, r *http.Request) {
 	a.serviceActionAPI(w, r, "singbox.action.", a.SingBox, "Sing-box 已操作")
+}
+
+func (a *App) SingBoxTemplateConfigValidateAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Config string `json:"config"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if err := a.SingBox.ValidateTemplateConfig(in.Config); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": "模版配置校验通过"})
+}
+
+func (a *App) SingBoxTemplateConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Config string `json:"config"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	res, err := a.SingBox.SaveTemplateConfig(in.Config)
+	a.respondAudited(w, r, "singbox.template.save", res, err, "模版配置已保存")
 }
 
 func (a *App) SingBoxConfigValidateAPI(w http.ResponseWriter, r *http.Request) {

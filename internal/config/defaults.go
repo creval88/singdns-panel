@@ -19,6 +19,7 @@ const DefaultConfigTemplate = `{
     "singbox": {
       "service_name": "sing-box",
       "config_path": "/etc/sing-box/config.json",
+      "template_path": "/opt/singdns-panel/app/configs/singbox-template.json",
       "url_path": "/etc/sing-box/url.txt",
       "bin_path": "/usr/local/bin/sing-box",
       "ctl_path": "/usr/local/bin/sbctl.sh"
