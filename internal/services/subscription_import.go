@@ -442,6 +442,37 @@ func maybeDecodeSubscriptionBody(content string) string {
 	return raw
 }
 
+func decodeBase64Flexible(s string) (string, bool) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", false
+	}
+	clean := strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t', ' ':
+			return -1
+		default:
+			return r
+		}
+	}, trimmed)
+	if clean == "" {
+		return "", false
+	}
+	try := []string{clean}
+	if m := len(clean) % 4; m != 0 {
+		try = append(try, clean+strings.Repeat("=", 4-m))
+	}
+	for _, c := range try {
+		for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+			b, err := enc.DecodeString(c)
+			if err == nil {
+				return string(b), true
+			}
+		}
+	}
+	return "", false
+}
+
 func splitSubscriptionLines(content string) []string {
 	normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
 	lines := strings.Split(normalized, "\n")
@@ -575,24 +606,27 @@ func parseSSLine(line string) (map[string]any, error) {
 
 	userinfoHost := raw
 	if !strings.Contains(raw, "@") {
-		b, err := base64.StdEncoding.DecodeString(raw)
-		if err != nil {
-			b, err = base64.RawStdEncoding.DecodeString(raw)
-			if err != nil {
-				return nil, err
-			}
+		decoded, ok := decodeBase64Flexible(raw)
+		if !ok {
+			return nil, fmt.Errorf("invalid ss node")
 		}
-		userinfoHost = string(b)
+		userinfoHost = decoded
 	}
 	parts := strings.SplitN(userinfoHost, "@", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid ss node")
 	}
 	methodPass := parts[0]
-	hostPort := parts[1]
+	hostPort := strings.TrimSpace(parts[1])
+	hostPort = strings.Trim(hostPort, "/")
 	if strings.Contains(methodPass, "%") {
 		if unescaped, err := url.QueryUnescape(methodPass); err == nil {
 			methodPass = unescaped
+		}
+	}
+	if !strings.Contains(methodPass, ":") {
+		if decoded, ok := decodeBase64Flexible(methodPass); ok {
+			methodPass = decoded
 		}
 	}
 	mp := strings.SplitN(methodPass, ":", 2)
@@ -752,6 +786,90 @@ func (s *SingBoxService) ImportSubscriptionFromURL(rawURL string) (*OperationRes
 		if res != nil {
 			res.Message = msg + "；" + res.Message
 		}
+	}
+	return res, nil
+}
+
+func (s *SingBoxService) ImportSubscriptionsFromURLs(rawURLs []string) (*OperationResult, error) {
+	urls := normalizeSubscriptionURLs(strings.Join(rawURLs, "\n"))
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("subscription url is empty")
+	}
+	if len(urls) == 1 {
+		return s.ImportSubscriptionFromURL(urls[0])
+	}
+
+	startedAt := time.Now()
+	allNodes := make([]map[string]any, 0)
+	totalParsed := 0
+	expandedSet := map[string]struct{}{}
+	failedCount := 0
+
+	for idx, rawURL := range urls {
+		rawURL = strings.TrimSpace(rawURL)
+		if rawURL == "" {
+			continue
+		}
+		s.AppendSubscriptionUpdateEventDetailed("info", "import", "start", rawURL, fmt.Sprintf("开始处理第 %d/%d 条节点订阅", idx+1, len(urls)), 0)
+		content, err := s.DownloadSubscription(rawURL)
+		if err != nil {
+			failedCount += 1
+			s.AppendSubscriptionUpdateEventDetailed("error", "import", "download", rawURL, "该条节点订阅拉取失败，已忽略："+err.Error(), time.Since(startedAt))
+			continue
+		}
+		trimmed := strings.TrimSpace(content)
+		if isSingboxConfigJSON(trimmed) {
+			failedCount += 1
+			s.AppendSubscriptionUpdateEventDetailed("error", "import", "type", rawURL, "该条内容是完整配置，不属于节点模板入口，已忽略", time.Since(startedAt))
+			continue
+		}
+		nodes, err := parseSubscriptionNodes(trimmed)
+		if err != nil {
+			failedCount += 1
+			s.AppendSubscriptionUpdateEventDetailed("error", "import", "build", rawURL, "该条节点订阅解析失败，已忽略："+err.Error(), time.Since(startedAt))
+			continue
+		}
+		if len(nodes) == 0 {
+			failedCount += 1
+			s.AppendSubscriptionUpdateEventDetailed("error", "import", "build", rawURL, "该条节点订阅未解析到可用节点，已忽略", time.Since(startedAt))
+			continue
+		}
+		allNodes = append(allNodes, nodes...)
+		totalParsed += len(nodes)
+		s.AppendSubscriptionUpdateEventDetailed("ok", "import", "parse", rawURL, fmt.Sprintf("节点订阅解析完成：获取节点 %d 个", len(nodes)), time.Since(startedAt))
+	}
+
+	if len(allNodes) == 0 {
+		return nil, fmt.Errorf("all node subscriptions failed or produced no supported nodes")
+	}
+	baseText, err := s.readSubscriptionBaseConfig()
+	if err != nil {
+		s.AppendSubscriptionUpdateEventDetailed("error", "import", "build", joinSubscriptionURLs(urls), err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+	finalConfig, summary, err := s.mergeSubscriptionNodesIntoConfig(baseText, allNodes)
+	if err != nil {
+		s.AppendSubscriptionUpdateEventDetailed("error", "import", "build", joinSubscriptionURLs(urls), err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+	if summary != nil {
+		for _, g := range summary.ExpandedGroups {
+			expandedSet[g] = struct{}{}
+		}
+		summary.ParsedNodeCount = totalParsed
+	}
+	res, err := s.ApplySubscriptionContent(joinSubscriptionURLs(urls), finalConfig, startedAt)
+	if err != nil {
+		return nil, err
+	}
+	expanded := make([]string, 0, len(expandedSet))
+	for g := range expandedSet {
+		expanded = append(expanded, g)
+	}
+	msg := fmt.Sprintf("节点模板导入完成：订阅 %d 条，成功 %d 条，忽略失败 %d 条，解析节点 %d 个，展开组 %d 个", len(urls), len(urls)-failedCount, failedCount, totalParsed, len(expanded))
+	s.AppendSubscriptionUpdateEventDetailed("ok", "import", "summary", joinSubscriptionURLs(urls), msg, time.Since(startedAt))
+	if res != nil {
+		res.Message = msg + "；" + res.Message
 	}
 	return res, nil
 }

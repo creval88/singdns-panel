@@ -67,6 +67,8 @@ function actionText(action) {
 }
 
 let nodeSubURLs = [];
+let nodeSubDirty = false;
+let fullSubDirty = false;
 
 function normalizeNodeURLs(arr) {
   const out = [];
@@ -86,6 +88,11 @@ function syncNodeSubHiddenField() {
   el.value = (nodeSubURLs || []).join('\n');
 }
 
+function markNodeSubDirty() { nodeSubDirty = true; }
+function clearNodeSubDirty() { nodeSubDirty = false; }
+function markFullSubDirty() { fullSubDirty = true; }
+function clearFullSubDirty() { fullSubDirty = false; }
+
 function moveNodeSubscriptionURL(idx, delta) {
   const from = Number(idx);
   const to = from + Number(delta);
@@ -94,6 +101,7 @@ function moveNodeSubscriptionURL(idx, delta) {
   const item = next.splice(from, 1)[0];
   next.splice(to, 0, item);
   nodeSubURLs = next;
+  markNodeSubDirty();
   renderNodeSubscriptionEditor();
 }
 
@@ -101,6 +109,7 @@ function deleteNodeSubscriptionURL(idx) {
   const i = Number(idx);
   if (Number.isNaN(i) || i < 0 || i >= nodeSubURLs.length) return;
   nodeSubURLs = nodeSubURLs.filter((_, n) => n !== i);
+  markNodeSubDirty();
   renderNodeSubscriptionEditor();
 }
 
@@ -119,6 +128,7 @@ function addNodeSubscriptionURL() {
     return;
   }
   nodeSubURLs = nodeSubURLs.concat([v]);
+  markNodeSubDirty();
   input.value = '';
   renderNodeSubscriptionEditor();
 }
@@ -231,11 +241,11 @@ function confirmUpdateNodeSub() {
   if (confirm('确认立即更新节点模板订阅？\n\n将执行：拉取多条节点订阅 → 忽略失败项（只要不是全部失败）→ 按模版规则筛选/展开 → 校验 → 自动备份当前完整配置 → 覆盖配置 → 重启 Sing-box。')) updateNodeSubscription();
 }
 async function runSingboxAction(action) { const j = await api('/api/singbox/action/' + action); if (j.ok) await refreshSingboxOverview(); }
-async function saveFullSub() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/full', {url}); if (j.ok) await refreshSingboxOverview(); }
-async function saveSub() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription', {urls}); if (j.ok) await refreshSingboxOverview(); }
+async function saveFullSub() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/full', {url}); if (j.ok) { clearFullSubDirty(); await refreshSingboxOverview(); } }
+async function saveSub() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription', {urls}); if (j.ok) { clearNodeSubDirty(); await refreshSingboxOverview(); } }
 async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview(); return j; }
-async function updateFullSubscription() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/update/full', {url}); await refreshSingboxOverview(); return j; }
-async function updateNodeSubscription() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription/update/nodes', {urls}); await refreshSingboxOverview(); return j; }
+async function updateFullSubscription() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/update/full', {url}); if (j && j.ok) clearFullSubDirty(); await refreshSingboxOverview(); return j; }
+async function updateNodeSubscription() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription/update/nodes', {urls}); if (j && j.ok) clearNodeSubDirty(); await refreshSingboxOverview(); return j; }
 
 async function validateConfig() {
   const el = getConfigEl();
@@ -351,9 +361,13 @@ function applyOverview(data) {
 
   setText('sb-updated-at', data.updatedAt || '');
   setText('config-updated-at', data.updatedAt || '');
-  setVal('suburl-full', (data.subscription && data.subscription.full_config_url) || data.url || '');
-  nodeSubURLs = normalizeNodeURLs((data.subscription && Array.isArray(data.subscription.node_urls) && data.subscription.node_urls.length) ? data.subscription.node_urls : ((data.subscription && Array.isArray(data.subscription.urls) && data.subscription.urls.length) ? data.subscription.urls : []));
-  renderNodeSubscriptionEditor();
+  if (!fullSubDirty) {
+    setVal('suburl-full', (data.subscription && data.subscription.full_config_url) || data.url || '');
+  }
+  if (!nodeSubDirty) {
+    nodeSubURLs = normalizeNodeURLs((data.subscription && Array.isArray(data.subscription.node_urls) && data.subscription.node_urls.length) ? data.subscription.node_urls : ((data.subscription && Array.isArray(data.subscription.urls) && data.subscription.urls.length) ? data.subscription.urls : []));
+    renderNodeSubscriptionEditor();
+  }
   setText('sb-version', data.version || '');
   setText('sb-latest-version', data.latestVersion || '');
   setText('panel-current-version', data.panelVersion || '');
@@ -412,6 +426,11 @@ function startManagedPolling(fn, ms){
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fn(); });
   reset();
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const fullInput = document.getElementById('suburl-full');
+  if (fullInput) fullInput.addEventListener('input', markFullSubDirty);
+});
 
 startManagedPolling(function(){ refreshSingboxOverview(); }, 5000);
 </script>
