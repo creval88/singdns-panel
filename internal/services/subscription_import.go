@@ -50,6 +50,17 @@ func (s *SingBoxService) BuildConfigFromSubscription(_ string, content string) (
 	if isSingboxConfigJSON(trimmed) {
 		return trimmed, &ImportSummary{ParsedNodeCount: 0}, nil
 	}
+	if nodes, ok := parseSingboxOutboundsOnly(trimmed); ok {
+		baseText, err := s.readSubscriptionBaseConfig()
+		if err != nil {
+			return "", nil, err
+		}
+		merged, summary, err := s.mergeSubscriptionNodesIntoConfig(baseText, nodes)
+		if err != nil {
+			return "", nil, err
+		}
+		return merged, summary, nil
+	}
 
 	nodes, err := parseSubscriptionNodes(trimmed)
 	if err != nil {
@@ -108,8 +119,14 @@ func isSingboxConfigJSON(content string) bool {
 	if err := json.Unmarshal([]byte(content), &raw); err != nil {
 		return false
 	}
-	_, ok := raw["outbounds"]
-	return ok
+	if _, ok := raw["outbounds"]; !ok {
+		return false
+	}
+	// 仅 outbounds 视为节点片段，不走完整配置直通。
+	if len(raw) == 1 {
+		return false
+	}
+	return true
 }
 
 func (s *SingBoxService) mergeSubscriptionNodesIntoConfig(baseConfig string, nodes []map[string]any) (string, *ImportSummary, error) {
@@ -398,6 +415,12 @@ func matchAnyRule(tag string, rules []string) bool {
 
 func parseSubscriptionNodes(content string) ([]map[string]any, error) {
 	decoded := maybeDecodeSubscriptionBody(content)
+	if nodes, ok := parseSingboxOutboundsOnly(decoded); ok {
+		return nodes, nil
+	}
+	if nodes, ok := parseClashProxiesContent(decoded); ok {
+		return nodes, nil
+	}
 	lines := splitSubscriptionLines(decoded)
 	out := make([]map[string]any, 0, len(lines))
 	for i, line := range lines {
@@ -686,10 +709,36 @@ func applyQueryTLSAndTransport(node map[string]any, u *url.URL) {
 	q := u.Query()
 	security := strings.ToLower(strings.TrimSpace(q.Get("security")))
 	sni := strings.TrimSpace(q.Get("sni"))
+	if sni == "" {
+		sni = strings.TrimSpace(q.Get("servername"))
+	}
+	if flow := strings.TrimSpace(q.Get("flow")); flow != "" {
+		node["flow"] = flow
+	}
 	if security == "tls" || security == "reality" || sni != "" {
 		tls := map[string]any{"enabled": true}
 		if sni != "" {
 			tls["server_name"] = sni
+		}
+		if insecure := strings.TrimSpace(q.Get("allowInsecure")); strings.EqualFold(insecure, "1") || strings.EqualFold(insecure, "true") {
+			tls["insecure"] = true
+		}
+		fp := strings.TrimSpace(q.Get("fp"))
+		if fp == "" {
+			fp = strings.TrimSpace(q.Get("client-fingerprint"))
+		}
+		if fp != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
+		}
+		if security == "reality" {
+			reality := map[string]any{"enabled": true}
+			if pk := strings.TrimSpace(q.Get("pbk")); pk != "" {
+				reality["public_key"] = pk
+			}
+			if sid := strings.TrimSpace(q.Get("sid")); sid != "" {
+				reality["short_id"] = sid
+			}
+			tls["reality"] = reality
 		}
 		node["tls"] = tls
 	}
@@ -824,6 +873,12 @@ func (s *SingBoxService) ImportSubscriptionsFromURLs(rawURLs []string) (*Operati
 		if isSingboxConfigJSON(trimmed) {
 			failedCount += 1
 			s.AppendSubscriptionUpdateEventDetailed("error", "import", "type", rawURL, "该条内容是完整配置，不属于节点模板入口，已忽略", time.Since(startedAt))
+			continue
+		}
+		if nodesFromJSON, ok := parseSingboxOutboundsOnly(trimmed); ok {
+			allNodes = append(allNodes, nodesFromJSON...)
+			totalParsed += len(nodesFromJSON)
+			s.AppendSubscriptionUpdateEventDetailed("ok", "import", "parse", rawURL, fmt.Sprintf("节点订阅(JSON)解析完成：获取节点 %d 个", len(nodesFromJSON)), time.Since(startedAt))
 			continue
 		}
 		nodes, err := parseSubscriptionNodes(trimmed)
