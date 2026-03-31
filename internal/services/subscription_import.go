@@ -289,6 +289,9 @@ func expandAllPlaceholder(group map[string]any, nodeTags []string) ([]any, bool)
 		}
 		appendTag(tag)
 	}
+	if len(out) == 0 {
+		appendTag("direct")
+	}
 	return out, true
 }
 
