@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,23 +47,99 @@ type BackupInfo struct {
 	IsCurrent bool   `json:"is_current"`
 }
 
+type SubscriptionNodeResult struct {
+	URL         string `json:"url"`
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+	ParsedNodes int    `json:"parsed_nodes,omitempty"`
+}
+
+type SubscriptionNodeSummary struct {
+	UpdatedAt     string `json:"updated_at"`
+	Total         int    `json:"total"`
+	Success       int    `json:"success"`
+	Ignored       int    `json:"ignored"`
+	Failed        int    `json:"failed"`
+	ParsedNodes   int    `json:"parsed_nodes"`
+	MatchedGroups int    `json:"matched_groups"`
+}
+
 type SubscriptionStatus struct {
-	URL                    string `json:"url"`
-	Host                   string `json:"host"`
-	Configured             bool   `json:"configured"`
-	HistoryCount           int    `json:"history_count"`
-	LastHistoryTime        string `json:"last_history_time"`
-	UpdateCount            int    `json:"update_count"`
-	LastUpdateTime         string `json:"last_update_time"`
-	LastUpdateStatus       string `json:"last_update_status"`
-	LastUpdateAction       string `json:"last_update_action"`
-	LastUpdateStage        string `json:"last_update_stage"`
-	LastUpdateMessage      string `json:"last_update_message"`
-	LastUpdateDurationMs   int64  `json:"last_update_duration_ms"`
-	LastUpdateDurationText string `json:"last_update_duration_text"`
-	LastSuccessTime        string `json:"last_success_time"`
-	LastSuccessStage       string `json:"last_success_stage"`
-	LastSuccessMessage     string `json:"last_success_message"`
+	URL                    string                   `json:"url"`
+	URLs                   []string                 `json:"urls"`
+	Host                   string                   `json:"host"`
+	Hosts                  []string                 `json:"hosts"`
+	FullConfigURL          string                   `json:"full_config_url"`
+	NodeURLs               []string                 `json:"node_urls"`
+	NodeHosts              []string                 `json:"node_hosts"`
+	NodeResults            []SubscriptionNodeResult `json:"node_results"`
+	NodeSummary            *SubscriptionNodeSummary `json:"node_summary"`
+	FullConfigured         bool                     `json:"full_configured"`
+	NodeConfigured         bool                     `json:"node_configured"`
+	Configured             bool                     `json:"configured"`
+	HistoryCount           int                      `json:"history_count"`
+	LastHistoryTime        string                   `json:"last_history_time"`
+	UpdateCount            int                      `json:"update_count"`
+	LastUpdateTime         string                   `json:"last_update_time"`
+	LastUpdateStatus       string                   `json:"last_update_status"`
+	LastUpdateAction       string                   `json:"last_update_action"`
+	LastUpdateStage        string                   `json:"last_update_stage"`
+	LastUpdateMessage      string                   `json:"last_update_message"`
+	LastUpdateDurationMs   int64                    `json:"last_update_duration_ms"`
+	LastUpdateDurationText string                   `json:"last_update_duration_text"`
+	LastSuccessTime        string                   `json:"last_success_time"`
+	LastSuccessStage       string                   `json:"last_success_stage"`
+	LastSuccessMessage     string                   `json:"last_success_message"`
+}
+
+func normalizeSubscriptionURLs(raw string) []string {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines))
+	seen := map[string]struct{}{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		out = append(out, line)
+	}
+	return out
+}
+
+func joinSubscriptionURLs(urls []string) string {
+	return strings.Join(normalizeSubscriptionURLs(strings.Join(urls, "\n")), "\n")
+}
+
+func (s *SingBoxService) nodeSubscriptionURLPath() string {
+	base := strings.TrimSpace(s.cfg.URLPath)
+	if base == "" {
+		return ""
+	}
+	ext := filepath.Ext(base)
+	if ext == "" {
+		return base + ".nodes"
+	}
+	return strings.TrimSuffix(base, ext) + ".nodes" + ext
+}
+
+func parseSubscriptionHosts(urls []string) []string {
+	hosts := make([]string, 0, len(urls))
+	seen := map[string]struct{}{}
+	for _, rawURL := range urls {
+		if u, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+			if host := strings.TrimSpace(u.Hostname()); host != "" {
+				if _, ok := seen[host]; !ok {
+					seen[host] = struct{}{}
+					hosts = append(hosts, host)
+				}
+			}
+		}
+	}
+	return hosts
 }
 
 type BackupStatus struct {
@@ -185,7 +262,15 @@ func (s *SingBoxService) SaveConfig(content string) (*OperationResult, error) {
 	return &OperationResult{Action: "config.save", Message: msg}, nil
 }
 
+func (s *SingBoxService) ReadSubscriptionURLs() ([]string, error) {
+	return s.ReadNodeSubscriptionURLs()
+}
+
 func (s *SingBoxService) ReadSubscriptionURL() (string, error) {
+	return s.ReadFullConfigSubscriptionURL()
+}
+
+func (s *SingBoxService) ReadFullConfigSubscriptionURL() (string, error) {
 	b, err := os.ReadFile(s.cfg.URLPath)
 	if err != nil {
 		return "", err
@@ -193,29 +278,85 @@ func (s *SingBoxService) ReadSubscriptionURL() (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
-func (s *SingBoxService) SaveSubscriptionURL(rawURL string) (*OperationResult, error) {
-	rawURL = strings.TrimSpace(rawURL)
-	if err := s.writeManagedFile(s.cfg.URLPath, rawURL+"\n"); err != nil {
+func (s *SingBoxService) ReadNodeSubscriptionURLs() ([]string, error) {
+	path := s.nodeSubscriptionURLPath()
+	b, err := os.ReadFile(path)
+	if err != nil {
 		return nil, err
 	}
-	msg := "订阅链接已保存"
-	if rawURL == "" {
-		msg = "订阅链接已清空"
+	return normalizeSubscriptionURLs(string(b)), nil
+}
+
+func (s *SingBoxService) writeSubscriptionURLFile(path string, raw string) error {
+	content := ""
+	if strings.TrimSpace(raw) != "" {
+		content = strings.TrimSpace(raw) + "\n"
 	}
-	return &OperationResult{Action: "subscription.save", Message: msg}, nil
+	return s.writeManagedFile(path, content)
+}
+
+func (s *SingBoxService) SaveFullConfigSubscriptionURL(rawURL string) (*OperationResult, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if err := s.writeSubscriptionURLFile(s.cfg.URLPath, rawURL); err != nil {
+		return nil, err
+	}
+	msg := "完整配置订阅已保存"
+	if rawURL == "" {
+		msg = "完整配置订阅已清空"
+	}
+	return &OperationResult{Action: "subscription.full.save", Message: msg}, nil
+}
+
+func (s *SingBoxService) SaveNodeSubscriptionURLs(rawURLs []string) (*OperationResult, error) {
+	urls := normalizeSubscriptionURLs(strings.Join(rawURLs, "\n"))
+	joined := joinSubscriptionURLs(urls)
+	if err := s.writeSubscriptionURLFile(s.nodeSubscriptionURLPath(), joined); err != nil {
+		return nil, err
+	}
+	msg := "节点订阅已保存"
+	if joined == "" {
+		msg = "节点订阅已清空"
+	} else if len(urls) > 1 {
+		msg = fmt.Sprintf("节点订阅已保存（%d 条）", len(urls))
+	}
+	return &OperationResult{Action: "subscription.nodes.save", Message: msg}, nil
+}
+
+func (s *SingBoxService) SaveSubscriptionURLs(rawURLs []string) (*OperationResult, error) {
+	return s.SaveNodeSubscriptionURLs(rawURLs)
+}
+
+func (s *SingBoxService) SaveSubscriptionURL(rawURL string) (*OperationResult, error) {
+	return s.SaveFullConfigSubscriptionURL(rawURL)
 }
 
 func (s *SingBoxService) UpdateSubscription() (*OperationResult, error) {
-	rawURL, err := s.ReadSubscriptionURL()
+	urls, err := s.ReadNodeSubscriptionURLs()
+	if err == nil && len(urls) > 0 {
+		return s.UpdateNodeSubscriptionsFromURLs(urls)
+	}
+	rawURL, err := s.ReadFullConfigSubscriptionURL()
 	if err != nil {
 		s.AppendSubscriptionUpdateEventDetailed("error", "update", "read-url", "", err.Error(), 0)
 		return nil, err
 	}
-	return s.UpdateSubscriptionFromURL(rawURL)
+	return s.UpdateFullConfigSubscriptionFromURL(rawURL)
 }
 
 func (s *SingBoxService) UpdateSubscriptionFromURL(rawURL string) (*OperationResult, error) {
+	return s.UpdateFullConfigSubscriptionFromURL(rawURL)
+}
+
+func (s *SingBoxService) UpdateSubscriptionFromURLs(rawURLs []string) (*OperationResult, error) {
+	return s.UpdateNodeSubscriptionsFromURLs(rawURLs)
+}
+
+func (s *SingBoxService) UpdateFullConfigSubscriptionFromURL(rawURL string) (*OperationResult, error) {
 	return s.ImportSubscriptionFromURL(rawURL)
+}
+
+func (s *SingBoxService) UpdateNodeSubscriptionsFromURLs(rawURLs []string) (*OperationResult, error) {
+	return s.ImportSubscriptionsFromURLs(rawURLs)
 }
 
 func (s *SingBoxService) DownloadSubscription(rawURL string) (string, error) {
@@ -291,8 +432,100 @@ func (s *SingBoxService) RunScheduledSubscriptionUpdate() error {
 	return err
 }
 
+func parseFirstInt(message string, patterns ...string) int {
+	for _, p := range patterns {
+		re := regexp.MustCompile(p)
+		m := re.FindStringSubmatch(message)
+		if len(m) < 2 {
+			continue
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(m[1]))
+		if err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+func buildNodeSubscriptionResultMap(nodeURLs []string, updates []SubscriptionUpdateEvent) (map[string]SubscriptionNodeResult, *SubscriptionNodeSummary) {
+	resultMap := make(map[string]SubscriptionNodeResult, len(nodeURLs))
+	for _, u := range nodeURLs {
+		resultMap[u] = SubscriptionNodeResult{URL: u, Status: "pending", Message: "尚无更新记录"}
+	}
+	if len(nodeURLs) == 0 {
+		return resultMap, nil
+	}
+
+	summary := &SubscriptionNodeSummary{Total: len(nodeURLs)}
+	for _, ev := range updates {
+		if ev.Action != "import" {
+			continue
+		}
+		if summary.UpdatedAt == "" && strings.TrimSpace(ev.Time) != "" {
+			summary.UpdatedAt = ev.Time
+		}
+		if ev.Stage == "summary" {
+			summary.ParsedNodes = parseFirstInt(ev.Message, `解析节点\s*(\d+)\s*个`)
+			summary.MatchedGroups = parseFirstInt(ev.Message, `展开组\s*(\d+)\s*个`)
+			continue
+		}
+
+		urlKey := strings.TrimSpace(ev.URL)
+		if urlKey == "" {
+			continue
+		}
+		curr, ok := resultMap[urlKey]
+		if !ok || curr.Status != "pending" {
+			continue
+		}
+		if ev.Status == "ok" {
+			curr.Status = "success"
+			curr.Message = ev.Message
+			if ev.Stage == "parse" {
+				curr.ParsedNodes = parseFirstInt(ev.Message, `获取节点\s*(\d+)\s*个`)
+			}
+			resultMap[urlKey] = curr
+			continue
+		}
+		if ev.Status == "error" {
+			if strings.Contains(ev.Message, "已忽略") {
+				curr.Status = "ignored"
+			} else {
+				curr.Status = "failed"
+			}
+			curr.Message = ev.Message
+			resultMap[urlKey] = curr
+		}
+	}
+
+	for _, u := range nodeURLs {
+		item := resultMap[u]
+		switch item.Status {
+		case "success":
+			summary.Success++
+			summary.ParsedNodes += item.ParsedNodes
+		case "ignored":
+			summary.Ignored++
+		case "failed":
+			summary.Failed++
+		}
+	}
+	if summary.Total > 0 && summary.Success == 0 && summary.Ignored == 0 && summary.Failed == 0 {
+		for _, item := range resultMap {
+			if item.Status == "pending" {
+				summary.Failed++
+			}
+		}
+	}
+	return resultMap, summary
+}
+
 func (s *SingBoxService) SubscriptionStatus() (*SubscriptionStatus, error) {
-	rawURL, err := s.ReadSubscriptionURL()
+	fullURL, err := s.ReadFullConfigSubscriptionURL()
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	nodeURLs, err := s.ReadNodeSubscriptionURLs()
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -304,9 +537,33 @@ func (s *SingBoxService) SubscriptionStatus() (*SubscriptionStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	info := &SubscriptionStatus{URL: rawURL, Configured: strings.TrimSpace(rawURL) != "", HistoryCount: len(history), UpdateCount: len(updates)}
-	if u, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
-		info.Host = u.Hostname()
+	hosts := parseSubscriptionHosts(nodeURLs)
+	resultMap, nodeSummary := buildNodeSubscriptionResultMap(nodeURLs, updates)
+	nodeResults := make([]SubscriptionNodeResult, 0, len(nodeURLs))
+	for _, u := range nodeURLs {
+		nodeResults = append(nodeResults, resultMap[u])
+	}
+
+	info := &SubscriptionStatus{
+		URL:            fullURL,
+		URLs:           nodeURLs,
+		FullConfigURL:  fullURL,
+		NodeURLs:       nodeURLs,
+		NodeHosts:      hosts,
+		NodeResults:    nodeResults,
+		NodeSummary:    nodeSummary,
+		FullConfigured: strings.TrimSpace(fullURL) != "",
+		NodeConfigured: len(nodeURLs) > 0,
+		Configured:     strings.TrimSpace(fullURL) != "" || len(nodeURLs) > 0,
+		HistoryCount:   len(history),
+		UpdateCount:    len(updates),
+	}
+	info.Hosts = hosts
+	if len(hosts) > 0 {
+		info.Host = hosts[0]
+		if len(hosts) > 1 {
+			info.Host = fmt.Sprintf("%s 等 %d 个", hosts[0], len(hosts))
+		}
 	}
 	if len(history) > 0 {
 		info.LastHistoryTime = history[0].Time

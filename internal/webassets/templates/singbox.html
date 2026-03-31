@@ -66,6 +66,122 @@ function actionText(action) {
   return action || 'update';
 }
 
+let nodeSubURLs = [];
+
+function normalizeNodeURLs(arr) {
+  const out = [];
+  const seen = new Set();
+  (arr || []).forEach((x) => {
+    const v = String(x || '').trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  });
+  return out;
+}
+
+function syncNodeSubHiddenField() {
+  const el = document.getElementById('suburls');
+  if (!el) return;
+  el.value = (nodeSubURLs || []).join('\n');
+}
+
+function moveNodeSubscriptionURL(idx, delta) {
+  const from = Number(idx);
+  const to = from + Number(delta);
+  if (Number.isNaN(from) || Number.isNaN(to) || from < 0 || to < 0 || from >= nodeSubURLs.length || to >= nodeSubURLs.length) return;
+  const next = nodeSubURLs.slice();
+  const item = next.splice(from, 1)[0];
+  next.splice(to, 0, item);
+  nodeSubURLs = next;
+  renderNodeSubscriptionEditor();
+}
+
+function deleteNodeSubscriptionURL(idx) {
+  const i = Number(idx);
+  if (Number.isNaN(i) || i < 0 || i >= nodeSubURLs.length) return;
+  nodeSubURLs = nodeSubURLs.filter((_, n) => n !== i);
+  renderNodeSubscriptionEditor();
+}
+
+function addNodeSubscriptionURL() {
+  const input = document.getElementById('suburl-new');
+  if (!input) return;
+  const v = String(input.value || '').trim();
+  if (!v) {
+    toast('请输入订阅 URL', false);
+    return;
+  }
+  if (nodeSubURLs.includes(v)) {
+    toast('该 URL 已存在', false);
+    input.value = '';
+    input.focus();
+    return;
+  }
+  nodeSubURLs = nodeSubURLs.concat([v]);
+  input.value = '';
+  renderNodeSubscriptionEditor();
+}
+
+function renderNodeSubscriptionEditor() {
+  const el = document.getElementById('subscription-node-editor-list');
+  if (!el) return;
+  if (!nodeSubURLs.length) {
+    el.innerHTML = '<div class="muted empty-text">暂无节点订阅，请先添加。</div>';
+    syncNodeSubHiddenField();
+    return;
+  }
+  el.innerHTML = nodeSubURLs.map((u, i) => `
+    <div class="backup-item backup-item-compact">
+      <div>
+        <div class="backup-name">#${i + 1} · ${escapeHTML(u)}</div>
+      </div>
+      <div class="actions toolbar-slim">
+        <button class="ghost" type="button" onclick="moveNodeSubscriptionURL(${i}, -1)" ${i === 0 ? 'disabled' : ''}>上移</button>
+        <button class="ghost" type="button" onclick="moveNodeSubscriptionURL(${i}, 1)" ${i === nodeSubURLs.length - 1 ? 'disabled' : ''}>下移</button>
+        <button class="warn" type="button" onclick="deleteNodeSubscriptionURL(${i})">删除</button>
+      </div>
+    </div>
+  `).join('');
+  syncNodeSubHiddenField();
+}
+
+function renderNodeSummary(summary) {
+  const s = summary || {};
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v ?? ''); };
+  setText('node-summary-updated-at', s.updated_at || '-');
+  setText('node-summary-total', s.total || 0);
+  setText('node-summary-success', s.success || 0);
+  setText('node-summary-ignored', s.ignored || 0);
+  setText('node-summary-failed', s.failed || 0);
+  setText('node-summary-parsed', s.parsed_nodes || 0);
+  setText('node-summary-groups', s.matched_groups || 0);
+}
+
+function renderNodeSubscriptionResults(list) {
+  const el = document.getElementById('subscription-node-result-list');
+  if (!el) return;
+  if (!list || !list.length) {
+    el.innerHTML = '<div class="muted empty-text">暂无节点订阅状态</div>';
+    return;
+  }
+  const statusClass = (v) => {
+    if (v === 'success') return 'badge-ok';
+    if (v === 'ignored') return 'badge-warn';
+    if (v === 'failed') return 'badge-bad';
+    return '';
+  };
+  el.innerHTML = list.map((x) => `
+    <div class="backup-item backup-item-compact event-item event-${escapeHTML(x.status || 'info')}">
+      <div>
+        <div class="backup-name">${escapeHTML(x.url || '')}</div>
+        <div class="muted">${escapeHTML(x.message || '-')} ${(x.parsed_nodes > 0) ? ('· 解析节点 ' + escapeHTML(String(x.parsed_nodes))) : ''}</div>
+      </div>
+      <span class="badge badge-plain ${statusClass(x.status)}">${escapeHTML(x.status || 'pending')}</span>
+    </div>
+  `).join('');
+}
+
 function getTemplateEl() { return document.getElementById('template-config'); }
 function getConfigEl() { return document.getElementById('config'); }
 
@@ -106,11 +222,20 @@ function confirmStopSingbox() {
   if (confirm('确认停止 Sing-box？停止后代理转发会中断。')) runSingboxAction('stop');
 }
 function confirmUpdateSub() {
-  if (confirm('确认立即更新订阅？\n\n将执行：拉取订阅节点 → 按模版规则筛选/展开 → 校验 → 自动备份当前完整配置 → 覆盖配置 → 重启 Sing-box。')) updateSubscription();
+  if (confirm('确认立即更新订阅？')) updateSubscription();
+}
+function confirmUpdateFullSub() {
+  if (confirm('确认立即更新完整配置订阅？\n\n将执行：下载完整配置 → 校验 → 自动备份当前配置 → 覆盖配置 → 重启 Sing-box。')) updateFullSubscription();
+}
+function confirmUpdateNodeSub() {
+  if (confirm('确认立即更新节点模板订阅？\n\n将执行：拉取多条节点订阅 → 忽略失败项（只要不是全部失败）→ 按模版规则筛选/展开 → 校验 → 自动备份当前完整配置 → 覆盖配置 → 重启 Sing-box。')) updateNodeSubscription();
 }
 async function runSingboxAction(action) { const j = await api('/api/singbox/action/' + action); if (j.ok) await refreshSingboxOverview(); }
-async function saveSub() { const j = await postJSON('/api/singbox/subscription', {url: document.getElementById('suburl').value}); if (j.ok) await refreshSingboxOverview(); }
+async function saveFullSub() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/full', {url}); if (j.ok) await refreshSingboxOverview(); }
+async function saveSub() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription', {urls}); if (j.ok) await refreshSingboxOverview(); }
 async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview(); return j; }
+async function updateFullSubscription() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/update/full', {url}); await refreshSingboxOverview(); return j; }
+async function updateNodeSubscription() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription/update/nodes', {urls}); await refreshSingboxOverview(); return j; }
 
 async function validateConfig() {
   const el = getConfigEl();
@@ -226,12 +351,15 @@ function applyOverview(data) {
 
   setText('sb-updated-at', data.updatedAt || '');
   setText('config-updated-at', data.updatedAt || '');
-  setVal('suburl', data.url || '');
+  setVal('suburl-full', (data.subscription && data.subscription.full_config_url) || data.url || '');
+  nodeSubURLs = normalizeNodeURLs((data.subscription && Array.isArray(data.subscription.node_urls) && data.subscription.node_urls.length) ? data.subscription.node_urls : ((data.subscription && Array.isArray(data.subscription.urls) && data.subscription.urls.length) ? data.subscription.urls : []));
+  renderNodeSubscriptionEditor();
   setText('sb-version', data.version || '');
   setText('sb-latest-version', data.latestVersion || '');
   setText('panel-current-version', data.panelVersion || '');
   setText('panel-release-version', (data.panelRelease && data.panelRelease.version) || '未发现');
-  setText('sub-configured', (data.subscription && data.subscription.configured) ? '已配置' : '未配置');
+  setText('sub-full-configured', (data.subscription && data.subscription.full_configured) ? '已配置' : '未配置');
+  setText('sub-node-configured', (data.subscription && data.subscription.node_configured) ? '已配置' : '未配置');
   setText('sub-host', (data.subscription && data.subscription.host) || '-');
   setText('sub-last-update-time', (data.subscription && data.subscription.last_update_time) || '尚无记录');
 
@@ -261,6 +389,8 @@ function applyOverview(data) {
     setText('config-server-size', `${data.configStatus.server_bytes || 0} bytes / ${data.configStatus.server_lines || 0} lines`);
   }
 
+  renderNodeSummary((data.subscription && data.subscription.node_summary) || null);
+  renderNodeSubscriptionResults((data.subscription && data.subscription.node_results) || []);
   renderHistory(data.history || []);
   renderUpdateEvents(data.updateEvents || []);
   renderBackups(data.backups || [], data.backupStatus || null);

@@ -15,60 +15,120 @@
 {{define "singbox_subscription_card"}}
 <section class="grid two singbox-work-grid">
   <section class="card">
-    <div class="card-title-row"><h3>订阅源与执行状态</h3><span class="badge">配置源</span></div>
+    <div class="card-title-row"><h3>完整配置订阅入口</h3><span class="badge">Full Config</span></div>
     <div class="info-strip-grid">
-      <div class="info-pill"><span class="muted">订阅状态</span><b id="sub-configured">{{if .Subscription.Configured}}已配置{{else}}未配置{{end}}</b></div>
-      <div class="info-pill"><span class="muted">来源主机</span><b id="sub-host">{{or .Subscription.Host "-"}}</b></div>
+      <div class="info-pill"><span class="muted">状态</span><b id="sub-full-configured">{{if .Subscription.FullConfigured}}已配置{{else}}未配置{{end}}</b></div>
+      <div class="info-pill"><span class="muted">当前配置更新时间</span><b id="sb-updated-at">{{.UpdatedAt}}</b></div>
       <div class="info-pill"><span class="muted">最近更新</span><b id="sub-last-update-time">{{or .Subscription.LastUpdateTime "尚无记录"}}</b></div>
       <div class="info-pill"><span class="muted">最近结果</span><b id="sub-last-update-status" class="{{if eq .Subscription.LastUpdateStatus "ok"}}ok{{else if .Subscription.LastUpdateStatus}}bad{{end}}">{{if eq .Subscription.LastUpdateStatus "ok"}}成功{{else if .Subscription.LastUpdateStatus}}{{.Subscription.LastUpdateStatus}}{{else}}未执行{{end}}</b></div>
     </div>
-    <label class="field-label" for="suburl">订阅链接</label>
-    <input id="suburl" value="{{.URL}}" placeholder="https://...">
-    <div class="status-list kv-list compact-kv">
-      <div><b>当前配置更新时间</b><span id="sb-updated-at">{{.UpdatedAt}}</span></div>
-      <div><b>最近动作</b><span id="sub-last-update-action">{{or .Subscription.LastUpdateAction "-"}}</span></div>
-      <div><b>结果说明</b><span id="sub-last-update-message">{{or .Subscription.LastUpdateMessage "保存订阅不会改配置，只有“立即更新订阅”才会下载并应用。"}}</span></div>
-    </div>
-    <div class="section-note">执行“立即更新订阅”时：拉取订阅节点 → 按模版规则筛选/展开 → 校验 → 自动备份当前完整配置 → 写入 → 重启。失败不会静默吞掉，会写入下方历史。</div>
+    <label class="field-label" for="suburl-full">完整配置订阅链接</label>
+    <input id="suburl-full" value="{{.Subscription.FullConfigURL}}" placeholder="https://.../config.json">
+    <div class="section-note">这里保留原来的完整配置订阅入口：如果远端返回的是完整 sing-box 配置，会直接校验、备份、覆盖并重启。</div>
     <div class="actions">
-      <button onclick="saveSub()">保存订阅</button>
-      <button onclick="confirmUpdateSub()">立即更新订阅</button>
+      <button onclick="saveFullSub()">保存完整配置订阅</button>
+      <button onclick="confirmUpdateFullSub()">立即更新完整配置订阅</button>
     </div>
   </section>
   <section class="card">
-    <div class="card-title-row"><h3>订阅历史与反馈</h3><span class="badge">History</span></div>
-    <div class="mini-split-head">
-      <div>
-        <div class="section-title tight">保存过的订阅 URL</div>
-        <div class="section-note">记录来源变更，方便核对“是不是换过订阅”。</div>
-      </div>
-      <div class="history-meta"><span class="muted">共</span> <b id="sub-history-count">{{.Subscription.HistoryCount}}</b></div>
+    <div class="card-title-row"><h3>多订阅节点模板入口</h3><span class="badge">Nodes + Template</span></div>
+    <div class="info-strip-grid">
+      <div class="info-pill"><span class="muted">状态</span><b id="sub-node-configured">{{if .Subscription.NodeConfigured}}已配置{{else}}未配置{{end}}</b></div>
+      <div class="info-pill"><span class="muted">来源主机</span><b id="sub-host">{{or .Subscription.Host "-"}}</b></div>
+      <div class="info-pill"><span class="muted">最近动作</span><b id="sub-last-update-action">{{or .Subscription.LastUpdateAction "-"}}</b></div>
+      <div class="info-pill"><span class="muted">结果说明</span><b id="sub-last-update-message">{{or .Subscription.LastUpdateMessage "保存订阅不会改配置，只有执行更新才会下载并应用。"}}</b></div>
     </div>
-    <div class="backup-list" id="subscription-history-list">
-      {{range .History}}
-      <div class="backup-item backup-item-compact"><div><div class="backup-name">{{.URL}}</div><div class="muted">{{.Time}}</div></div></div>
-      {{else}}<div class="muted empty-text">暂无订阅历史</div>{{end}}
+    <label class="field-label" for="suburl-new">节点订阅列表（可视化管理）</label>
+    <div class="actions toolbar-slim" style="margin-bottom:8px">
+      <input id="suburl-new" placeholder="https://a.example/sub" style="flex:1; min-width:0;">
+      <button type="button" onclick="addNodeSubscriptionURL()">添加</button>
     </div>
+    <div class="section-note">支持 add / delete / reorder。保存与更新会按当前列表顺序提交。</div>
+    <div class="backup-list" id="subscription-node-editor-list">
+      <div class="muted empty-text">暂无节点订阅，请先添加。</div>
+    </div>
+    <textarea id="suburls" rows="6" style="display:none" aria-hidden="true" placeholder="https://a.example/sub&#10;https://b.example/sub">{{if .Subscription.NodeURLs}}{{range $i, $u := .Subscription.NodeURLs}}{{if $i}}
+{{end}}{{$u}}{{end}}{{end}}</textarea>
+    <div class="section-note">这里专门处理“只有节点订阅，后续按模板写入配置”的流程。多条订阅里若部分失败，只要不是全部失败，就忽略失败项并继续写入；详细失败原因会记录在右侧执行记录。</div>
+
     <div class="divider"></div>
     <div class="mini-split-head">
       <div>
-        <div class="section-title tight">更新执行记录</div>
-        <div class="section-note">这里看“刚才为什么成功/失败”，不用猜。</div>
+        <div class="section-title tight">节点订阅执行摘要</div>
+        <div class="section-note">每次更新后可快速看到成功 / 忽略 / 失败与解析节点数。</div>
       </div>
-      <div class="history-meta"><span class="muted">共</span> <b id="sub-update-count">{{.Subscription.UpdateCount}}</b></div>
+      <div class="history-meta"><span class="muted">更新时间</span> <b id="node-summary-updated-at">{{if .Subscription.NodeSummary}}{{or .Subscription.NodeSummary.UpdatedAt "-"}}{{else}}-{{end}}</b></div>
     </div>
-    <div class="backup-list" id="subscription-update-list">
-      {{range .UpdateEvents}}
-      <div class="backup-item backup-item-compact event-item event-{{.Status}}">
-        <div>
-          <div class="backup-name">{{.Action}} · {{or .Message "-"}}</div>
-          <div class="muted">{{.Time}}{{if .URL}} · {{.URL}}{{end}}</div>
-        </div>
-        <span class="badge badge-plain {{if eq .Status "ok"}}badge-ok{{else}}badge-bad{{end}}">{{.Status}}</span>
+    <div class="status-list kv-list compact-kv" id="node-summary-box">
+      <div><b>总订阅</b><span id="node-summary-total">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Total}}{{else}}0{{end}}</span></div>
+      <div><b>成功</b><span id="node-summary-success">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Success}}{{else}}0{{end}}</span></div>
+      <div><b>忽略</b><span id="node-summary-ignored">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Ignored}}{{else}}0{{end}}</span></div>
+      <div><b>失败</b><span id="node-summary-failed">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Failed}}{{else}}0{{end}}</span></div>
+      <div><b>解析节点</b><span id="node-summary-parsed">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.ParsedNodes}}{{else}}0{{end}}</span></div>
+      <div><b>命中模板组</b><span id="node-summary-groups">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.MatchedGroups}}{{else}}0{{end}}</span></div>
+    </div>
+
+    <div class="mini-split-head" style="margin-top:10px">
+      <div>
+        <div class="section-title tight">每条节点订阅状态</div>
+        <div class="section-note">最小交付：展示最近一次更新对每条 URL 的结果。</div>
       </div>
-      {{else}}<div class="muted empty-text">暂无更新执行记录</div>{{end}}
+    </div>
+    <div class="backup-list" id="subscription-node-result-list">
+      {{if .Subscription.NodeResults}}
+        {{range .Subscription.NodeResults}}
+        <div class="backup-item backup-item-compact event-item event-{{.Status}}">
+          <div>
+            <div class="backup-name">{{.URL}}</div>
+            <div class="muted">{{or .Message "-"}}{{if gt .ParsedNodes 0}} · 解析节点 {{.ParsedNodes}}{{end}}</div>
+          </div>
+          <span class="badge badge-plain {{if eq .Status "success"}}badge-ok{{else if eq .Status "ignored"}}badge-warn{{else if eq .Status "failed"}}badge-bad{{end}}">{{.Status}}</span>
+        </div>
+        {{end}}
+      {{else}}
+        <div class="muted empty-text">暂无节点订阅状态</div>
+      {{end}}
+    </div>
+
+    <div class="actions">
+      <button onclick="saveSub()">保存节点订阅</button>
+      <button onclick="confirmUpdateNodeSub()">立即更新节点模板订阅</button>
     </div>
   </section>
+</section>
+<section class="card">
+  <div class="card-title-row"><h3>订阅历史与反馈</h3><span class="badge">History</span></div>
+  <div class="mini-split-head">
+    <div>
+      <div class="section-title tight">保存过的订阅 URL</div>
+      <div class="section-note">记录来源变更，方便核对“是不是换过订阅”。</div>
+    </div>
+    <div class="history-meta"><span class="muted">共</span> <b id="sub-history-count">{{.Subscription.HistoryCount}}</b></div>
+  </div>
+  <div class="backup-list" id="subscription-history-list">
+    {{range .History}}
+    <div class="backup-item backup-item-compact"><div><div class="backup-name">{{.URL}}</div><div class="muted">{{.Time}}</div></div></div>
+    {{else}}<div class="muted empty-text">暂无订阅历史</div>{{end}}
+  </div>
+  <div class="divider"></div>
+  <div class="mini-split-head">
+    <div>
+      <div class="section-title tight">更新执行记录</div>
+      <div class="section-note">这里看“刚才为什么成功/失败”，不用猜。</div>
+    </div>
+    <div class="history-meta"><span class="muted">共</span> <b id="sub-update-count">{{.Subscription.UpdateCount}}</b></div>
+  </div>
+  <div class="backup-list" id="subscription-update-list">
+    {{range .UpdateEvents}}
+    <div class="backup-item backup-item-compact event-item event-{{.Status}}">
+      <div>
+        <div class="backup-name">{{.Action}} · {{or .Message "-"}}</div>
+        <div class="muted">{{.Time}}{{if .URL}} · {{.URL}}{{end}}</div>
+      </div>
+      <span class="badge badge-plain {{if eq .Status "ok"}}badge-ok{{else}}badge-bad{{end}}">{{.Status}}</span>
+    </div>
+    {{else}}<div class="muted empty-text">暂无更新执行记录</div>{{end}}
+  </div>
 </section>
 {{end}}
 
