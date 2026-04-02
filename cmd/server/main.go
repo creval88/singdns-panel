@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -70,12 +70,12 @@ func main() {
 			systemd := services.NewSystemdService()
 			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 			if strings.TrimSpace(rawURL) == "" {
-				rawURL, err = singbox.ReadSubscriptionURL()
+				rawURL, err = singbox.ReadFullConfigSubscriptionURL()
 				if err != nil {
 					log.Fatal(err)
 				}
 			} else {
-				if _, err := singbox.SaveSubscriptionURL(rawURL); err != nil {
+				if _, err := singbox.SaveFullConfigSubscriptionURL(rawURL); err != nil {
 					log.Fatal(err)
 				}
 			}
@@ -165,7 +165,13 @@ func main() {
 		pr.Post("/api/singbox/config/save", app.SingBoxConfigSaveAPI)
 		pr.Get("/api/singbox/subscription", app.SingBoxSubscriptionAPI)
 		pr.Post("/api/singbox/subscription", app.SingBoxSubscriptionSaveAPI)
+		pr.Post("/api/singbox/subscription/full", app.SingBoxSubscriptionSaveFullAPI)
 		pr.Post("/api/singbox/subscription/update", app.SingBoxSubscriptionUpdateAPI)
+		pr.Post("/api/singbox/subscription/update/full", app.SingBoxSubscriptionUpdateFullAPI)
+		pr.Post("/api/singbox/subscription/update/nodes", app.SingBoxSubscriptionUpdateNodesAPI)
+		pr.Get("/api/singbox/manual-nodes", app.SingBoxManualNodesAPI)
+		pr.Post("/api/singbox/manual-nodes", app.SingBoxManualNodesSaveAPI)
+		pr.Post("/api/singbox/manual-nodes/import", app.SingBoxManualNodesImportAPI)
 		pr.Get("/api/singbox/version", app.SingBoxVersionAPI)
 		pr.Post("/api/singbox/upgrade", app.SingBoxUpgradeAPI)
 		pr.Post("/api/singbox/upgrade/rollback", app.SingBoxUpgradeRollbackAPI)

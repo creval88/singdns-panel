@@ -96,6 +96,40 @@
     </div>
   </section>
 </section>
+
+<section class="card">
+  <div class="card-title-row"><h3>手动节点入口</h3><span class="badge">Manual Nodes</span></div>
+  <div class="section-note">手动节点草稿长期保存：可反复编辑、删除、覆盖；导入应用时会与节点订阅一起 merge，不影响 Full config 订阅路径。</div>
+  <label class="field-label" for="manual-nodes-input">手动节点（每行一个 URI）</label>
+  <textarea id="manual-nodes-input" rows="8" placeholder="vless://...&#10;vmess://...&#10;trojan://...&#10;ss://...">{{.ManualNodesDraft}}</textarea>
+  <div class="actions">
+    <button onclick="saveManualNodesDraft()">保存手动节点草稿</button>
+    <button onclick="importManualNodes()">导入手动节点并应用</button>
+  </div>
+  <div class="section-note">建议两步：先“保存手动节点草稿”，确认内容后再“导入手动节点并应用”。</div>
+  <div class="status-list kv-list compact-kv" id="manual-nodes-summary-box">
+    <div><b>输入行数</b><span id="manual-summary-total">0</span></div>
+    <div><b>成功</b><span id="manual-summary-success">0</span></div>
+    <div><b>失败</b><span id="manual-summary-failed">0</span></div>
+    <div><b>忽略</b><span id="manual-summary-ignored">0</span></div>
+    <div><b>解析节点</b><span id="manual-summary-parsed">0</span></div>
+    <div><b>结果</b><span id="manual-summary-message">尚未执行</span></div>
+  </div>
+  <div class="mini-split-head" style="margin-top:10px">
+    <div>
+      <div class="section-title tight">逐行导入结果</div>
+      <div class="section-note">每行展示原始输入、状态、解析 tag/类型与错误信息。</div>
+    </div>
+  </div>
+  <div class="backup-list" id="manual-nodes-line-result-list"><div class="muted empty-text">暂无结果</div></div>
+  <div class="mini-split-head" style="margin-top:10px">
+    <div>
+      <div class="section-title tight">错误摘要</div>
+    </div>
+  </div>
+  <div class="backup-list" id="manual-nodes-error-list"><div class="muted empty-text">暂无错误</div></div>
+</section>
+
 <section class="card">
   <div class="card-title-row"><h3>订阅历史与反馈</h3><span class="badge">History</span></div>
   <div class="mini-split-head">

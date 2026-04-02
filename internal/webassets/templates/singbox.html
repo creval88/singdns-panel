@@ -69,6 +69,7 @@ function actionText(action) {
 let nodeSubURLs = [];
 let nodeSubDirty = false;
 let fullSubDirty = false;
+let manualNodesDirty = false;
 
 function normalizeNodeURLs(arr) {
   const out = [];
@@ -92,6 +93,8 @@ function markNodeSubDirty() { nodeSubDirty = true; }
 function clearNodeSubDirty() { nodeSubDirty = false; }
 function markFullSubDirty() { fullSubDirty = true; }
 function clearFullSubDirty() { fullSubDirty = false; }
+function markManualNodesDirty() { manualNodesDirty = true; }
+function clearManualNodesDirty() { manualNodesDirty = false; }
 
 function moveNodeSubscriptionURL(idx, delta) {
   const from = Number(idx);
@@ -192,6 +195,51 @@ function renderNodeSubscriptionResults(list) {
   `).join('');
 }
 
+function renderManualSummary(result) {
+  const r = result || {};
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v ?? ''); };
+  setText('manual-summary-total', r.total || 0);
+  setText('manual-summary-success', r.success || 0);
+  setText('manual-summary-failed', r.failed || 0);
+  setText('manual-summary-ignored', r.ignored || 0);
+  setText('manual-summary-parsed', r.parsed_nodes || 0);
+  setText('manual-summary-message', r.message || '尚未执行');
+}
+
+function renderManualLineResults(list) {
+  const el = document.getElementById('manual-nodes-line-result-list');
+  if (!el) return;
+  if (!list || !list.length) {
+    el.innerHTML = '<div class="muted empty-text">暂无结果</div>';
+    return;
+  }
+  const badgeClass = (s) => {
+    if (s === 'success') return 'badge-ok';
+    if (s === 'ignored') return 'badge-warn';
+    if (s === 'failed') return 'badge-bad';
+    return '';
+  };
+  el.innerHTML = list.map((x) => `
+    <div class="backup-item backup-item-compact event-item event-${escapeHTML(x.status || 'info')}">
+      <div>
+        <div class="backup-name">#${escapeHTML(String(x.line || '-'))} · ${escapeHTML(x.input_display || x.input_raw || '')}</div>
+        <div class="muted">${escapeHTML(x.node_type || '-')} · ${escapeHTML(x.tag || '-')} · ${escapeHTML(x.message || '-')}</div>
+      </div>
+      <span class="badge badge-plain ${badgeClass(x.status)}">${escapeHTML(x.status || '-')}</span>
+    </div>
+  `).join('');
+}
+
+function renderManualErrors(errors) {
+  const el = document.getElementById('manual-nodes-error-list');
+  if (!el) return;
+  if (!errors || !errors.length) {
+    el.innerHTML = '<div class="muted empty-text">暂无错误</div>';
+    return;
+  }
+  el.innerHTML = errors.map((x) => `<div class="backup-item backup-item-compact"><div><div class="backup-name">${escapeHTML(x || '')}</div></div></div>`).join('');
+}
+
 function getTemplateEl() { return document.getElementById('template-config'); }
 function getConfigEl() { return document.getElementById('config'); }
 
@@ -218,6 +266,7 @@ async function saveTemplateConfig() {
   if (!el) return;
   const j = await postJSON('/api/singbox/template/config/save', { config: el.value });
   if (j && j.ok) {
+    clearManualNodesDirty();
     await refreshSingboxOverview();
   }
   return j;
@@ -246,6 +295,35 @@ async function saveSub() { const urls = normalizeNodeURLs(nodeSubURLs); const j 
 async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview(); return j; }
 async function updateFullSubscription() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/update/full', {url}); if (j && j.ok) clearFullSubDirty(); await refreshSingboxOverview(); return j; }
 async function updateNodeSubscription() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription/update/nodes', {urls}); if (j && j.ok) clearNodeSubDirty(); await refreshSingboxOverview(); return j; }
+
+async function saveManualNodesDraft() {
+  const input = document.getElementById('manual-nodes-input');
+  const nodes = (input && input.value) ? String(input.value) : '';
+  const j = await postJSON('/api/singbox/manual-nodes', { nodes });
+  if (j && j.ok) {
+    clearManualNodesDirty();
+    await refreshSingboxOverview();
+  }
+  return j;
+}
+
+async function importManualNodes() {
+  const input = document.getElementById('manual-nodes-input');
+  const nodes = (input && input.value) ? String(input.value) : '';
+  const j = await postJSON('/api/singbox/manual-nodes/import', { nodes });
+  if (j && j.result) {
+    renderManualSummary(j.result);
+    renderManualLineResults(j.result.line_results || []);
+    renderManualErrors(j.result.errors || []);
+  } else if (j && !j.ok) {
+    renderManualSummary({ message: j.error || '导入失败' });
+    renderManualLineResults([]);
+  }
+  if (j && j.ok) {
+    await refreshSingboxOverview();
+  }
+  return j;
+}
 
 async function validateConfig() {
   const el = getConfigEl();
@@ -368,6 +446,9 @@ function applyOverview(data) {
     nodeSubURLs = normalizeNodeURLs((data.subscription && Array.isArray(data.subscription.node_urls) && data.subscription.node_urls.length) ? data.subscription.node_urls : ((data.subscription && Array.isArray(data.subscription.urls) && data.subscription.urls.length) ? data.subscription.urls : []));
     renderNodeSubscriptionEditor();
   }
+  if (!manualNodesDirty) {
+    setVal('manual-nodes-input', (data.manualNodesDraft || data.manual_nodes_draft || ''));
+  }
   setText('sb-version', data.version || '');
   setText('sb-latest-version', data.latestVersion || '');
   setText('panel-current-version', data.panelVersion || '');
@@ -430,6 +511,8 @@ function startManagedPolling(fn, ms){
 document.addEventListener('DOMContentLoaded', () => {
   const fullInput = document.getElementById('suburl-full');
   if (fullInput) fullInput.addEventListener('input', markFullSubDirty);
+  const manualInput = document.getElementById('manual-nodes-input');
+  if (manualInput) manualInput.addEventListener('input', markManualNodesDirty);
 });
 
 startManagedPolling(function(){ refreshSingboxOverview(); }, 5000);

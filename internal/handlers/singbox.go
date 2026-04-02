@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	svc "singdns-panel/internal/services"
 )
@@ -62,42 +63,45 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		clashAPI = &svc.ClashAPIInfo{}
 	}
 	panel, _ := a.Panel.LatestLocalRelease()
+	manualNodesDraft, _ := a.SingBox.ReadManualNodesDraft()
 	return map[string]any{
-		"Status":        status,
-		"Config":        config,
-		"TemplateConfig": templateConfig,
-		"URL":           url,
-		"Subscription":  subscription,
-		"Cron":          cron,
-		"Version":       version,
-		"LatestVersion": latestVersion,
-		"UpdatedAt":     updatedAt,
-		"Backups":       backups,
-		"BackupStatus":  backupStatus,
-		"History":       history,
-		"UpdateEvents":  updateEvents,
-		"ConfigStatus":  configStatus,
-		"ClashAPI":      clashAPI,
-		"PanelVersion":  a.Panel.CurrentVersion(),
-		"PanelRelease":  panel,
+		"Status":           status,
+		"Config":           config,
+		"TemplateConfig":   templateConfig,
+		"URL":              url,
+		"Subscription":     subscription,
+		"Cron":             cron,
+		"Version":          version,
+		"LatestVersion":    latestVersion,
+		"UpdatedAt":        updatedAt,
+		"Backups":          backups,
+		"BackupStatus":     backupStatus,
+		"History":          history,
+		"UpdateEvents":     updateEvents,
+		"ConfigStatus":     configStatus,
+		"ClashAPI":         clashAPI,
+		"PanelVersion":     a.Panel.CurrentVersion(),
+		"PanelRelease":     panel,
+		"ManualNodesDraft": manualNodesDraft,
 
-		"status":        status,
-		"config":        config,
-		"templateConfig": templateConfig,
-		"url":           url,
-		"subscription":  subscription,
-		"cron":          cron,
-		"version":       version,
-		"latestVersion": latestVersion,
-		"updatedAt":     updatedAt,
-		"backups":       backups,
-		"backupStatus":  backupStatus,
-		"history":       history,
-		"updateEvents":  updateEvents,
-		"configStatus":  configStatus,
-		"clashAPI":      clashAPI,
-		"panelVersion":  a.Panel.CurrentVersion(),
-		"panelRelease":  panel,
+		"status":           status,
+		"config":           config,
+		"templateConfig":   templateConfig,
+		"url":              url,
+		"subscription":     subscription,
+		"cron":             cron,
+		"version":          version,
+		"latestVersion":    latestVersion,
+		"updatedAt":        updatedAt,
+		"backups":          backups,
+		"backupStatus":     backupStatus,
+		"history":          history,
+		"updateEvents":     updateEvents,
+		"configStatus":     configStatus,
+		"clashAPI":         clashAPI,
+		"panelVersion":     a.Panel.CurrentVersion(),
+		"panelRelease":     panel,
+		"manualNodesDraft": manualNodesDraft,
 	}
 }
 
@@ -119,7 +123,9 @@ func (a *App) SingBoxTemplateConfigAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"config": mustStr(a.SingBox.ReadTemplateConfig())})
 }
 func (a *App) SingBoxSubscriptionAPI(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]string{"url": mustStr(a.SingBox.ReadSubscriptionURL())})
+	fullURL, _ := a.SingBox.ReadFullConfigSubscriptionURL()
+	nodeURLs, _ := a.SingBox.ReadNodeSubscriptionURLs()
+	json.NewEncoder(w).Encode(map[string]any{"url": fullURL, "urls": nodeURLs, "full_config_url": fullURL, "node_urls": nodeURLs})
 }
 
 func (a *App) SingBoxActionAPI(w http.ResponseWriter, r *http.Request) {
@@ -203,19 +209,100 @@ func (a *App) SingBoxConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) SingBoxSubscriptionSaveAPI(w http.ResponseWriter, r *http.Request) {
 	var in struct {
+		URL  string   `json:"url"`
+		URLs []string `json:"urls"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	urls := in.URLs
+	if len(urls) == 0 && in.URL != "" {
+		urls = []string{in.URL}
+	}
+	res, err := a.SingBox.SaveNodeSubscriptionURLs(urls)
+	if err == nil {
+		for _, item := range urls {
+			a.SingBox.AppendSubscriptionHistory(item)
+		}
+	}
+	a.respondAudited(w, r, "singbox.subscription.save", res, err, "节点订阅已保存")
+}
+
+func (a *App) SingBoxSubscriptionSaveFullAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
 		URL string `json:"url"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
-	res, err := a.SingBox.SaveSubscriptionURL(in.URL)
-	if err == nil {
+	res, err := a.SingBox.SaveFullConfigSubscriptionURL(in.URL)
+	if err == nil && in.URL != "" {
 		a.SingBox.AppendSubscriptionHistory(in.URL)
 	}
-	a.respondAudited(w, r, "singbox.subscription.save", res, err, "订阅链接已保存")
+	a.respondAudited(w, r, "singbox.subscription.full.save", res, err, "完整配置订阅已保存")
 }
 
 func (a *App) SingBoxSubscriptionUpdateAPI(w http.ResponseWriter, r *http.Request) {
 	res, err := a.SingBox.UpdateSubscription()
 	a.respondAudited(w, r, "singbox.subscription.update", res, err, "订阅已更新")
+}
+
+func (a *App) SingBoxSubscriptionUpdateFullAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		URL string `json:"url"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	res, err := a.SingBox.UpdateFullConfigSubscriptionFromURL(in.URL)
+	a.respondAudited(w, r, "singbox.subscription.full.update", res, err, "完整配置订阅已更新")
+}
+
+func (a *App) SingBoxSubscriptionUpdateNodesAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		URLs []string `json:"urls"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	res, err := a.SingBox.UpdateNodeSubscriptionsFromURLs(in.URLs)
+	a.respondAudited(w, r, "singbox.subscription.nodes.update", res, err, "节点模板订阅已更新")
+}
+
+func (a *App) SingBoxManualNodesAPI(w http.ResponseWriter, r *http.Request) {
+	text, err := a.SingBox.ReadManualNodesDraft()
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "nodes": text})
+}
+
+func (a *App) SingBoxManualNodesSaveAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Nodes string `json:"nodes"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	res, err := a.SingBox.SaveManualNodesDraft(in.Nodes)
+	a.respondAudited(w, r, "singbox.manual_nodes.save", res, err, "手动节点草稿已保存")
+}
+
+func (a *App) SingBoxManualNodesImportAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Nodes string `json:"nodes"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	res, err := a.SingBox.ImportManualNodes(in.Nodes)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		payload := map[string]any{"ok": false, "error": err.Error()}
+		if res != nil {
+			payload["result"] = res
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return
+	}
+	msg := "手动节点导入成功"
+	if res != nil && strings.TrimSpace(res.Message) != "" {
+		msg = strings.TrimSpace(res.Message)
+	}
+	a.auditMessageFromRequest(r, "singbox.manual_nodes.import", msg)
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg, "result": res})
 }
 func (a *App) SingBoxVersionAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"version": mustStr(a.SingBox.Version())})
