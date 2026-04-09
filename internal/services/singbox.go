@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -167,6 +168,13 @@ type ClashAPIInfo struct {
 	URL     string
 	Secret  string
 	Port    string
+}
+
+type IPForwardStatus struct {
+	Enabled bool   `json:"enabled"`
+	Value   string `json:"value"`
+	Source  string `json:"source"`
+	Message string `json:"message"`
 }
 
 func NewSingBoxService(cfg cfgpkg.ServiceConfig, systemd *SystemdService, panelConfigPath string) *SingBoxService {
@@ -1432,6 +1440,44 @@ func extractSingboxBinary(tarGzPath, verNum, arch string) (string, error) {
 		return tmpBin.Name(), nil
 	}
 	return "", fmt.Errorf("sing-box binary not found in archive")
+}
+
+func (s *SingBoxService) IPForwardStatus() (*IPForwardStatus, error) {
+	status := &IPForwardStatus{}
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward"); err == nil {
+		value := strings.TrimSpace(string(b))
+		status.Value = value
+		status.Source = "/proc/sys/net/ipv4/ip_forward"
+		status.Enabled = value == "1"
+		if status.Enabled {
+			status.Message = "已开启 IP 转发"
+		} else {
+			status.Message = "未开启 IP 转发"
+		}
+		return status, nil
+	}
+
+	cmds := [][]string{{"sysctl", "-n", "net.ipv4.ip_forward"}, {"sysctl", "net.ipv4.ip_forward"}}
+	var lastErr error
+	for _, cmd := range cmds {
+		out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", strings.Join(cmd, " "), err)
+			continue
+		}
+		text := strings.TrimSpace(string(out))
+		status.Source = strings.Join(cmd, " ")
+		status.Value = text
+		status.Enabled = strings.HasSuffix(text, "= 1") || text == "1"
+		if status.Enabled {
+			status.Message = "已开启 IP 转发"
+		} else {
+			status.Message = "未开启 IP 转发"
+		}
+		return status, nil
+	}
+
+	return nil, fmt.Errorf("检测 IP 转发失败: %w", lastErr)
 }
 
 func (s *SingBoxService) ClashAPIInfo(panelHost string) (*ClashAPIInfo, error) {

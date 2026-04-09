@@ -13,6 +13,23 @@
     "channel": "beta",
     "arch": "amd64"
   },
+  "monitor": {
+    "enabled": false,
+    "api_base": "http://127.0.0.1:9090",
+    "default_proxy_group": "默认代理",
+    "primary_group": "香港手动",
+    "fallback_group": "自建节点",
+    "test_url": "http://www.gstatic.com/generate_204",
+    "timeout_ms": 5000,
+    "primary_max_stable_delay_ms": 150,
+    "fallback_max_stable_delay_ms": 500,
+    "disable_primary_group_optimization": false,
+    "fail_threshold": 2,
+    "success_threshold": 2,
+    "recheck_interval_sec": 1,
+    "auto_failback": false,
+    "state_file": "/opt/singdns-panel/data/monitor-state.json"
+  },
   "services": {
     "singbox": {
       "service_name": "sing-box",

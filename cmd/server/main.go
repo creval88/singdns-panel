@@ -230,6 +230,7 @@ func main() {
 		pr.Post("/api/singbox/manual-nodes/import", app.SingBoxManualNodesImportAPI)
 		pr.Get("/api/singbox/version", app.SingBoxVersionAPI)
 		pr.Post("/api/singbox/upgrade", app.SingBoxUpgradeAPI)
+		pr.Get("/api/singbox/ip-forward", app.SingBoxIPForwardStatusAPI)
 		pr.Post("/api/singbox/upgrade/upload", app.SingBoxUpgradeUploadAPI)
 		pr.Post("/api/singbox/upgrade/rollback", app.SingBoxUpgradeRollbackAPI)
 		pr.Get("/api/singbox/cron", app.SingBoxCronGetAPI)

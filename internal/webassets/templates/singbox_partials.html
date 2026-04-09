@@ -198,6 +198,19 @@
     <button onclick="uploadCoreFile()">上传并替换内核</button>
   </div>
 
+  <div class="divider"></div>
+  <div class="card-title-row"><h3>IP 转发检测</h3><span class="badge">Kernel</span></div>
+  <div class="status-list kv-list">
+    <div><b>当前状态</b><span id="ip-forward-enabled">{{if .IPForwardStatus}}{{if .IPForwardStatus.Enabled}}已开启{{else}}未开启{{end}}{{else}}检测失败{{end}}</span></div>
+    <div><b>读取值</b><span id="ip-forward-value">{{if .IPForwardStatus}}{{or .IPForwardStatus.Value "-"}}{{else}}-{{end}}</span></div>
+    <div><b>检测来源</b><span id="ip-forward-source">{{if .IPForwardStatus}}{{or .IPForwardStatus.Source "-"}}{{else}}-{{end}}</span></div>
+    <div><b>说明</b><span id="ip-forward-message">{{or .IPForwardMessage "检测失败"}}</span></div>
+  </div>
+  <div class="actions toolbar-slim">
+    <button class="ghost" onclick="refreshIPForwardStatus()">重新检测 IP 转发</button>
+  </div>
+  <div class="section-note">上传替换内核成功后，页面会顺便检测当前机器是否已开启 IP 转发。若未开启，请按部署说明或系统配置自行打开 `net.ipv4.ip_forward=1`。</div>
+
   <div class="section-note" id="panel-upgrade-note">{{if .PanelRelease}}检测到本地升级包目录：{{.PanelRelease.Path}}{{else}}将发布包解压到配置的 updates 目录后，可在此检测与执行升级。{{end}}</div>
 </section>
 {{end}}

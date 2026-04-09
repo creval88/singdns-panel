@@ -374,6 +374,31 @@ async function upgradeCoreRollback() {
   const j = await postJSON('/api/singbox/upgrade/rollback');
   if (j.ok) await refreshSingboxOverview();
 }
+function renderIPForwardStatus(status, errText) {
+  const stateEl = document.getElementById('ip-forward-enabled');
+  const valueEl = document.getElementById('ip-forward-value');
+  const sourceEl = document.getElementById('ip-forward-source');
+  const messageEl = document.getElementById('ip-forward-message');
+  if (!stateEl || !valueEl || !sourceEl || !messageEl) return;
+  if (!status) {
+    stateEl.textContent = '检测失败';
+    valueEl.textContent = '-';
+    sourceEl.textContent = '-';
+    messageEl.textContent = errText || '检测失败';
+    return;
+  }
+  stateEl.textContent = status.enabled ? '已开启' : '未开启';
+  valueEl.textContent = status.value || '-';
+  sourceEl.textContent = status.source || '-';
+  messageEl.textContent = status.message || (status.enabled ? '已开启 IP 转发' : '未开启 IP 转发');
+}
+
+async function refreshIPForwardStatus(silent = false) {
+  const j = await request('/api/singbox/ip-forward', { method: 'GET', silent, busyText: '检测 IP 转发中...' });
+  renderIPForwardStatus(j && j.ok ? j.status : null, j && !j.ok ? (j.error || j.message || '检测失败') : '');
+  return j;
+}
+
 async function uploadCoreFile() {
   const input = document.getElementById('sb-core-upload-file');
   const file = input && input.files && input.files[0];
@@ -381,7 +406,7 @@ async function uploadCoreFile() {
     toast('请先选择要上传的内核文件', false);
     return;
   }
-  if (!confirm('确认上传并替换 Sing-box 内核？\n\n系统会先备份当前内核，再执行替换与校验。失败将自动回退。')) return;
+  if (!confirm('确认上传并替换 Sing-box 内核？\n\n系统会先备份当前内核，再执行替换与校验。失败将自动回退。完成后会顺便检测当前机器是否开启了 IP 转发。')) return;
 
   const token = await ensureCsrf();
   const fd = new FormData();
@@ -406,6 +431,12 @@ async function uploadCoreFile() {
     if (j.ok) {
       if (input) input.value = '';
       await refreshSingboxOverview();
+      const ipj = await refreshIPForwardStatus(true);
+      if (ipj && ipj.ok && ipj.status) {
+        toast(ipj.status.enabled ? '内核替换完成，且 IP 转发已开启' : '内核替换完成，但 IP 转发未开启', ipj.status.enabled);
+      } else if (ipj && !ipj.ok) {
+        toast('内核替换完成，但 IP 转发检测失败: ' + (ipj.error || 'unknown'), false);
+      }
     }
     return j;
   } catch (e) {
@@ -561,6 +592,8 @@ function applyOverview(data) {
     setText('panel-upgrade-note', '将发布包解压到配置的 updates 目录后，可在此检测与执行升级。');
   }
 
+  renderIPForwardStatus(data.ipForwardStatus || null, data.ipForwardError || data.ipForwardMessage || '检测失败');
+
   if (data.cron) {
     setHTML('cron-enabled', data.cron.enabled ? '<span class="ok">已开启</span>' : '<span class="bad">未开启</span>');
     setText('cron-summary', data.cron.summary || '');
@@ -642,5 +675,6 @@ startManagedPolling(function(){
   if (isTemplateConfigProtected()) return;
   refreshSingboxOverview();
 }, 5000);
+refreshIPForwardStatus(true);
 </script>
 </main></div></body></html>

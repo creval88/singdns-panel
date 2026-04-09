@@ -17,6 +17,7 @@ type App struct {
 	Templates    *template.Template
 	SingBox      *services.SingBoxService
 	MosDNS       *services.MosDNSService
+	Monitor      *services.MonitorService
 	Audit        *services.AuditService
 	Panel        *services.PanelService
 	PanelVersion string

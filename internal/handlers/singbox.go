@@ -77,6 +77,14 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 	}
 	panel, _ := a.Panel.LatestLocalRelease()
 	manualNodesDraft, _ := a.SingBox.ReadManualNodesDraft()
+	ipForwardStatus, ipForwardErr := a.SingBox.IPForwardStatus()
+	ipForwardMessage := "检测失败"
+	if ipForwardStatus != nil && strings.TrimSpace(ipForwardStatus.Message) != "" {
+		ipForwardMessage = ipForwardStatus.Message
+	}
+	if ipForwardErr != nil {
+		ipForwardMessage = ipForwardErr.Error()
+	}
 	return map[string]any{
 		"Status":           status,
 		"Config":           config,
@@ -99,6 +107,9 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		"PanelVersion":     a.Panel.CurrentVersion(),
 		"PanelRelease":     panel,
 		"ManualNodesDraft": manualNodesDraft,
+		"IPForwardStatus":  ipForwardStatus,
+		"IPForwardError":   ipForwardErrString(ipForwardErr),
+		"IPForwardMessage": ipForwardMessage,
 
 		"status":           status,
 		"config":           config,
@@ -121,7 +132,17 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		"panelVersion":     a.Panel.CurrentVersion(),
 		"panelRelease":     panel,
 		"manualNodesDraft": manualNodesDraft,
+		"ipForwardStatus":  ipForwardStatus,
+		"ipForwardError":   ipForwardErrString(ipForwardErr),
+		"ipForwardMessage": ipForwardMessage,
 	}
+}
+
+func ipForwardErrString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (a *App) SingBoxOverviewAPI(w http.ResponseWriter, r *http.Request) {
@@ -330,6 +351,29 @@ func (a *App) SingBoxUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 	err := a.SingBox.Upgrade()
 	a.auditFromRequest(r, "singbox.upgrade", err)
 	respondMessage(w, err, "Sing-box 核心已更新")
+}
+
+func (a *App) SingBoxIPForwardStatusAPI(w http.ResponseWriter, r *http.Request) {
+	status, err := a.SingBox.IPForwardStatus()
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      false,
+			"error":   err.Error(),
+			"message": "检测 IP 转发失败",
+		})
+		return
+	}
+	message := "未开启 IP 转发"
+	if status != nil && status.Enabled {
+		message = "已开启 IP 转发"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"message": message,
+		"status":  status,
+	})
 }
 
 func (a *App) SingBoxUpgradeUploadAPI(w http.ResponseWriter, r *http.Request) {
