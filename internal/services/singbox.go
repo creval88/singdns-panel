@@ -2,6 +2,7 @@ package services
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	cfgpkg "singdns-panel/internal/config"
 	"singdns-panel/internal/utils"
 )
+
+const maxUploadedCoreBytes = 500 * 1024 * 1024 // 500MB
 
 type SingBoxService struct {
 	cfg             cfgpkg.ServiceConfig
@@ -784,6 +787,272 @@ func (s *SingBoxService) RollbackCoreUpgrade() error {
 	}
 	s.logCoreEvent("ok", "rollback", "manual", "已手动回退到最近一次升级前内核", time.Since(startedAt))
 	return nil
+}
+
+func (s *SingBoxService) UpgradeFromUploadedCore(uploadPath, originalName string) (*OperationResult, error) {
+	startedAt := time.Now()
+	uploadPath = strings.TrimSpace(uploadPath)
+	if uploadPath == "" {
+		err := fmt.Errorf("未收到上传文件")
+		s.logCoreEvent("error", "upgrade.upload", "input", err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+	if st, err := os.Stat(uploadPath); err != nil {
+		err = fmt.Errorf("读取上传文件失败: %w", err)
+		s.logCoreEvent("error", "upgrade.upload", "input", err.Error(), time.Since(startedAt))
+		return nil, err
+	} else if st.Size() == 0 {
+		err := fmt.Errorf("上传文件为空")
+		s.logCoreEvent("error", "upgrade.upload", "input", err.Error(), time.Since(startedAt))
+		return nil, err
+	} else if st.Size() > maxUploadedCoreBytes {
+		err := fmt.Errorf("上传文件过大（>%dMB）", maxUploadedCoreBytes/1024/1024)
+		s.logCoreEvent("error", "upgrade.upload", "input", err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+
+	rollbackBin, err := s.prepareCoreRollbackBinary()
+	if err != nil {
+		err = fmt.Errorf("替换前备份当前内核失败: %w", err)
+		s.logCoreEvent("error", "upgrade.upload", "backup", err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+
+	resolvedBin, cleanup, err := resolveUploadedCoreBinary(uploadPath, originalName)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		s.logCoreEvent("error", "upgrade.upload", "resolve", err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+
+	if err := validateUploadedCoreBinary(resolvedBin, s.cfg.BinPath); err != nil {
+		s.logCoreEvent("error", "upgrade.upload", "validate", err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+
+	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
+	_, _ = utils.Run(10*time.Second, "sudo", "mkdir", "-p", filepath.Dir(s.cfg.BinPath))
+	if err := s.installCoreBinary(resolvedBin); err != nil {
+		s.logCoreEvent("error", "upgrade.upload", "install", err.Error(), time.Since(startedAt))
+		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			s.logCoreEvent("ok", "rollback", "auto", "上传内核安装失败，已自动回退到升级前版本", time.Since(startedAt))
+			return nil, fmt.Errorf("安装上传内核失败，已自动回退到升级前版本: %w", err)
+		}
+		return nil, fmt.Errorf("安装上传内核失败，且自动回退失败: install_err=%v", err)
+	}
+	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
+		s.logCoreEvent("error", "upgrade.upload", "start", err.Error(), time.Since(startedAt))
+		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			s.logCoreEvent("ok", "rollback", "auto", "上传内核启动失败，已自动回退到升级前版本", time.Since(startedAt))
+			return nil, fmt.Errorf("上传内核启动失败，已自动回退到升级前版本: %w", err)
+		}
+		return nil, fmt.Errorf("上传内核启动失败，且自动回退失败: start_err=%v", err)
+	}
+	if err := s.verifyCoreVersion(); err != nil {
+		s.logCoreEvent("error", "upgrade.upload", "verify", err.Error(), time.Since(startedAt))
+		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
+			s.logCoreEvent("ok", "rollback", "auto", "上传内核校验失败，已自动回退到升级前版本", time.Since(startedAt))
+			return nil, fmt.Errorf("上传内核版本校验失败，已自动回退到升级前版本: %w", err)
+		}
+		return nil, fmt.Errorf("上传内核版本校验失败，且自动回退失败: verify_err=%v", err)
+	}
+
+	msg := "上传内核替换成功并已重启 sing-box"
+	s.logCoreEvent("ok", "upgrade.upload", "complete", msg, time.Since(startedAt))
+	return &OperationResult{Action: "upgrade.upload", Message: msg}, nil
+}
+
+func resolveUploadedCoreBinary(uploadPath, originalName string) (string, func(), error) {
+	lname := strings.ToLower(strings.TrimSpace(originalName))
+	if lname == "" {
+		lname = strings.ToLower(filepath.Base(uploadPath))
+	}
+	switch {
+	case strings.HasSuffix(lname, ".tar.gz"), strings.HasSuffix(lname, ".tgz"):
+		return extractUploadedCoreFromTarGz(uploadPath)
+	case strings.HasSuffix(lname, ".zip"):
+		return extractUploadedCoreFromZip(uploadPath)
+	case strings.HasSuffix(lname, ".tar"):
+		return extractUploadedCoreFromTar(uploadPath)
+	default:
+		return uploadPath, nil, nil
+	}
+}
+
+func extractUploadedCoreFromTarGz(path string) (string, func(), error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("打开 tar.gz 失败: %w", err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return "", nil, fmt.Errorf("解析 gzip 失败: %w", err)
+	}
+	defer gz.Close()
+	return extractCoreFromTarReader(tar.NewReader(gz))
+}
+
+func extractUploadedCoreFromTar(path string) (string, func(), error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("打开 tar 失败: %w", err)
+	}
+	defer f.Close()
+	return extractCoreFromTarReader(tar.NewReader(f))
+}
+
+func extractCoreFromTarReader(tr *tar.Reader) (string, func(), error) {
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("读取归档失败: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if !looksLikeSingBoxBinaryName(hdr.Name) {
+			continue
+		}
+		tmpBin, err := os.CreateTemp("", "sing-box-upload-bin-*")
+		if err != nil {
+			return "", nil, err
+		}
+		n, err := io.Copy(tmpBin, io.LimitReader(tr, maxUploadedCoreBytes+1))
+		if err != nil {
+			tmpBin.Close()
+			os.Remove(tmpBin.Name())
+			return "", nil, fmt.Errorf("写入临时内核失败: %w", err)
+		}
+		if n > maxUploadedCoreBytes {
+			tmpBin.Close()
+			os.Remove(tmpBin.Name())
+			return "", nil, fmt.Errorf("上传内核文件过大（>%dMB）", maxUploadedCoreBytes/1024/1024)
+		}
+		if err := tmpBin.Close(); err != nil {
+			os.Remove(tmpBin.Name())
+			return "", nil, err
+		}
+		if err := os.Chmod(tmpBin.Name(), 0755); err != nil {
+			os.Remove(tmpBin.Name())
+			return "", nil, err
+		}
+		return tmpBin.Name(), func() { _ = os.Remove(tmpBin.Name()) }, nil
+	}
+	return "", nil, fmt.Errorf("压缩包中未找到 sing-box 可执行文件")
+}
+
+func extractUploadedCoreFromZip(path string) (string, func(), error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("打开 zip 失败: %w", err)
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if !looksLikeSingBoxBinaryName(f.Name) {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return "", nil, fmt.Errorf("读取 zip 条目失败: %w", err)
+		}
+		tmpBin, err := os.CreateTemp("", "sing-box-upload-bin-*")
+		if err != nil {
+			rc.Close()
+			return "", nil, err
+		}
+		n, err := io.Copy(tmpBin, io.LimitReader(rc, maxUploadedCoreBytes+1))
+		if err != nil {
+			rc.Close()
+			tmpBin.Close()
+			os.Remove(tmpBin.Name())
+			return "", nil, fmt.Errorf("写入临时内核失败: %w", err)
+		}
+		if n > maxUploadedCoreBytes {
+			rc.Close()
+			tmpBin.Close()
+			os.Remove(tmpBin.Name())
+			return "", nil, fmt.Errorf("上传内核文件过大（>%dMB）", maxUploadedCoreBytes/1024/1024)
+		}
+		rc.Close()
+		if err := tmpBin.Close(); err != nil {
+			os.Remove(tmpBin.Name())
+			return "", nil, err
+		}
+		if err := os.Chmod(tmpBin.Name(), 0755); err != nil {
+			os.Remove(tmpBin.Name())
+			return "", nil, err
+		}
+		return tmpBin.Name(), func() { _ = os.Remove(tmpBin.Name()) }, nil
+	}
+	return "", nil, fmt.Errorf("zip 包中未找到 sing-box 可执行文件")
+}
+
+func looksLikeSingBoxBinaryName(name string) bool {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(name)))
+	if base == "sing-box" || base == "sing-box.exe" {
+		return true
+	}
+	if strings.HasPrefix(base, "sing-box-") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(name)), "/sing-box") {
+		return true
+	}
+	return false
+}
+
+func validateUploadedCoreBinary(path, installPath string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("上传内核不存在: %w", err)
+	}
+	if st.Size() == 0 {
+		return fmt.Errorf("上传内核文件为空")
+	}
+	if st.Size() > maxUploadedCoreBytes {
+		return fmt.Errorf("上传内核文件过大（>%dMB）", maxUploadedCoreBytes/1024/1024)
+	}
+	if st.Mode()&0111 == 0 {
+		if err := os.Chmod(path, st.Mode()|0755); err != nil {
+			return fmt.Errorf("上传内核不可执行，且赋予执行权限失败: %w", err)
+		}
+	}
+
+	checkCmds := [][]string{{path, "version"}, {"sudo", path, "version"}}
+	var lastErr error
+	for _, cmd := range checkCmds {
+		if _, err := utils.Run(10*time.Second, cmd[0], cmd[1:]...); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+
+	msg := "上传文件无法执行 `sing-box version` 校验"
+	arch := runtime.GOARCH
+	suspect := strings.ToLower(filepath.Base(path))
+	if strings.Contains(suspect, "amd64") && arch != "amd64" {
+		msg = fmt.Sprintf("上传内核疑似 amd64，但当前机器是 %s", arch)
+	}
+	if strings.Contains(suspect, "arm64") && arch != "arm64" {
+		msg = fmt.Sprintf("上传内核疑似 arm64，但当前机器是 %s", arch)
+	}
+	if strings.TrimSpace(installPath) != "" {
+		msg += fmt.Sprintf("（目标路径: %s）", installPath)
+	}
+	if lastErr != nil {
+		msg += fmt.Sprintf(": %v", lastErr)
+	}
+	return fmt.Errorf(msg)
 }
 
 func (s *SingBoxService) logCoreEvent(status, action, stage, message string, duration time.Duration) {

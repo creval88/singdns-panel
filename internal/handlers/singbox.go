@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
+	cfgpkg "singdns-panel/internal/config"
 	svc "singdns-panel/internal/services"
 )
 
@@ -35,6 +39,15 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 	if cron == nil {
 		cron = &svc.CronInfo{}
 	}
+	monitorCron, _ := a.Monitor.CronShow()
+	if monitorCron == nil {
+		monitorCron = &svc.CronInfo{}
+	}
+	monitorStatus, _ := a.Monitor.Status()
+	if monitorStatus == nil {
+		monitorStatus = &svc.MonitorStatus{}
+	}
+	monitorConfig := a.Config.Monitor
 	version, _ := a.SingBox.Version()
 	latestVersion, _ := a.SingBox.LatestVersion()
 	updatedAt, _ := a.SingBox.ConfigUpdatedAt()
@@ -71,6 +84,9 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		"URL":              url,
 		"Subscription":     subscription,
 		"Cron":             cron,
+		"MonitorCron":      monitorCron,
+		"MonitorStatus":    monitorStatus,
+		"MonitorConfig":    monitorConfig,
 		"Version":          version,
 		"LatestVersion":    latestVersion,
 		"UpdatedAt":        updatedAt,
@@ -90,6 +106,9 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		"url":              url,
 		"subscription":     subscription,
 		"cron":             cron,
+		"monitorCron":      monitorCron,
+		"monitorStatus":    monitorStatus,
+		"monitorConfig":    monitorConfig,
 		"version":          version,
 		"latestVersion":    latestVersion,
 		"updatedAt":        updatedAt,
@@ -313,6 +332,39 @@ func (a *App) SingBoxUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 	respondMessage(w, err, "Sing-box 核心已更新")
 }
 
+func (a *App) SingBoxUpgradeUploadAPI(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(512 << 20); err != nil {
+		a.respondAudited(w, r, "singbox.upgrade.upload", nil, fmt.Errorf("解析上传请求失败: %w", err), "")
+		return
+	}
+	f, hdr, err := r.FormFile("file")
+	if err != nil {
+		a.respondAudited(w, r, "singbox.upgrade.upload", nil, fmt.Errorf("请上传内核文件(file): %w", err), "")
+		return
+	}
+	defer f.Close()
+
+	tmp, err := os.CreateTemp("", "sing-box-upload-*")
+	if err != nil {
+		a.respondAudited(w, r, "singbox.upgrade.upload", nil, fmt.Errorf("创建临时文件失败: %w", err), "")
+		return
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmp, f); err != nil {
+		tmp.Close()
+		a.respondAudited(w, r, "singbox.upgrade.upload", nil, fmt.Errorf("保存上传文件失败: %w", err), "")
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		a.respondAudited(w, r, "singbox.upgrade.upload", nil, fmt.Errorf("写入上传文件失败: %w", err), "")
+		return
+	}
+
+	res, err := a.SingBox.UpgradeFromUploadedCore(tmpPath, hdr.Filename)
+	a.respondAudited(w, r, "singbox.upgrade.upload", res, err, "上传内核已替换")
+}
+
 func (a *App) SingBoxUpgradeRollbackAPI(w http.ResponseWriter, r *http.Request) {
 	err := a.SingBox.RollbackCoreUpgrade()
 	a.auditFromRequest(r, "singbox.upgrade.rollback", err)
@@ -336,6 +388,120 @@ func (a *App) SingBoxCronSetAPI(w http.ResponseWriter, r *http.Request) {
 func (a *App) SingBoxCronDeleteAPI(w http.ResponseWriter, r *http.Request) {
 	res, err := a.SingBox.CronDelete()
 	a.respondAudited(w, r, "singbox.cron.delete", res, err, "操作成功")
+}
+
+func (a *App) MonitorConfigAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":     true,
+		"config": a.Config.Monitor,
+	})
+}
+
+func (a *App) MonitorConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
+	var in cfgpkg.MonitorConfig
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	if strings.TrimSpace(in.DefaultProxyGroup) == "" {
+		respondMessage(w, fmt.Errorf("default_proxy_group 不能为空"), "")
+		return
+	}
+	if strings.TrimSpace(in.PrimaryGroup) == "" {
+		respondMessage(w, fmt.Errorf("primary_group 不能为空"), "")
+		return
+	}
+	if strings.TrimSpace(in.FallbackGroup) == "" {
+		respondMessage(w, fmt.Errorf("fallback_group 不能为空"), "")
+		return
+	}
+	if strings.TrimSpace(in.TestURL) == "" {
+		in.TestURL = a.Config.Monitor.TestURL
+		if strings.TrimSpace(in.TestURL) == "" {
+			in.TestURL = "http://www.gstatic.com/generate_204"
+		}
+	}
+	if in.TimeoutMS <= 0 {
+		in.TimeoutMS = 5000
+	}
+	if in.PrimaryMaxStableDelayMS <= 0 {
+		respondMessage(w, fmt.Errorf("primary_max_stable_delay_ms 必须 > 0"), "")
+		return
+	}
+	if in.FallbackMaxStableDelayMS <= 0 {
+		respondMessage(w, fmt.Errorf("fallback_max_stable_delay_ms 必须 > 0"), "")
+		return
+	}
+	if in.FailThreshold <= 0 {
+		in.FailThreshold = 2
+	}
+	if in.SuccessThreshold <= 0 {
+		in.SuccessThreshold = 2
+	}
+	if in.RecheckIntervalSec <= 0 {
+		in.RecheckIntervalSec = 1
+	}
+	if strings.TrimSpace(in.StateFile) == "" {
+		in.StateFile = a.Config.Monitor.StateFile
+		if strings.TrimSpace(in.StateFile) == "" {
+			in.StateFile = "/opt/singdns-panel/data/monitor-state.json"
+		}
+	}
+	if strings.TrimSpace(in.APIBase) == "" {
+		in.APIBase = a.Config.Monitor.APIBase
+		if strings.TrimSpace(in.APIBase) == "" {
+			in.APIBase = "http://127.0.0.1:9090"
+		}
+	}
+	cfg := a.Config.Monitor
+	cfg.Enabled = in.Enabled
+	cfg.APIBase = strings.TrimSpace(in.APIBase)
+	cfg.DefaultProxyGroup = strings.TrimSpace(in.DefaultProxyGroup)
+	cfg.PrimaryGroup = strings.TrimSpace(in.PrimaryGroup)
+	cfg.FallbackGroup = strings.TrimSpace(in.FallbackGroup)
+	cfg.TestURL = strings.TrimSpace(in.TestURL)
+	cfg.TimeoutMS = in.TimeoutMS
+	cfg.PrimaryMaxStableDelayMS = in.PrimaryMaxStableDelayMS
+	cfg.FallbackMaxStableDelayMS = in.FallbackMaxStableDelayMS
+	cfg.DisablePrimaryGroupOptimization = in.DisablePrimaryGroupOptimization
+	cfg.FailThreshold = in.FailThreshold
+	cfg.SuccessThreshold = in.SuccessThreshold
+	cfg.RecheckIntervalSec = in.RecheckIntervalSec
+	cfg.AutoFailback = in.AutoFailback
+	cfg.StateFile = strings.TrimSpace(in.StateFile)
+	a.Config.Monitor = cfg
+	if err := a.Config.Save(a.ConfigPath); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	a.Monitor = svc.NewMonitorService(cfg, a.SingBox)
+	a.auditMessageFromRequest(r, "monitor.config.save", "节点监控策略已保存")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": "节点监控策略已保存", "config": cfg})
+}
+
+func (a *App) MonitorCronGetAPI(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(must(a.Monitor.CronShow()))
+}
+
+func (a *App) MonitorCronSetAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IntervalMinutes int `json:"interval_minutes"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	res, err := a.Monitor.CronSet(in.IntervalMinutes)
+	a.respondAudited(w, r, "monitor.cron.set", res, err, "操作成功")
+}
+
+func (a *App) MonitorCronDeleteAPI(w http.ResponseWriter, r *http.Request) {
+	res, err := a.Monitor.CronDelete()
+	a.respondAudited(w, r, "monitor.cron.delete", res, err, "操作成功")
+}
+
+func (a *App) MonitorRunAPI(w http.ResponseWriter, r *http.Request) {
+	res, err := a.Monitor.RunOnce()
+	a.respondAudited(w, r, "monitor.run", res, err, "节点监控已执行")
 }
 
 func (a *App) SingBoxBackupsAPI(w http.ResponseWriter, r *http.Request) {

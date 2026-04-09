@@ -189,6 +189,15 @@
     <button class="ghost" onclick="upgradePanel()">执行本地包升级</button>
     <button class="warn" onclick="upgradePanelRemote()">下载并升级</button>
   </div>
+
+  <div class="divider"></div>
+  <div class="card-title-row"><h3>手动上传内核</h3><span class="badge">Upload</span></div>
+  <div class="section-note">支持单文件或压缩包（.tar.gz / .tgz / .zip / .tar）。上传后会先备份当前内核，再自动校验并替换。</div>
+  <div class="actions toolbar-slim" style="align-items:center; gap:8px; flex-wrap:wrap;">
+    <input id="sb-core-upload-file" type="file" accept=".tar.gz,.tgz,.zip,.tar,.bin,.exe,*/*" style="flex:1; min-width:220px;">
+    <button onclick="uploadCoreFile()">上传并替换内核</button>
+  </div>
+
   <div class="section-note" id="panel-upgrade-note">{{if .PanelRelease}}检测到本地升级包目录：{{.PanelRelease.Path}}{{else}}将发布包解压到配置的 updates 目录后，可在此检测与执行升级。{{end}}</div>
 </section>
 {{end}}
@@ -207,6 +216,56 @@
   <div class="actions">
     <button onclick="saveCron()">保存定时任务</button>
     <button class="ghost" onclick="deleteCron()">删除定时任务</button>
+  </div>
+</section>
+{{end}}
+
+{{define "monitor_cron_card"}}
+<section class="card">
+  <div class="card-title-row"><h3>节点监控自动执行</h3><span class="badge">Monitor</span></div>
+  <div class="status-list kv-list">
+    <div><b>自动检测切换</b><span>{{if .MonitorStatus.Enabled}}<span class="ok">已启用</span>{{else}}<span class="bad">已关闭</span>{{end}}</span></div>
+    <div><b>当前状态</b><span id="monitor-cron-enabled">{{if .MonitorCron.Enabled}}<span class="ok">已开启</span>{{else}}<span class="bad">未开启</span>{{end}}</span></div>
+    <div><b>任务信息</b><span id="monitor-cron-summary">{{if .MonitorCron.Enabled}}{{.MonitorCron.Summary}}（每轮含 30 秒补跑）{{else}}未开启{{end}}</span></div>
+    <div><b>监控模式</b><span id="monitor-mode-inline">{{or .MonitorStatus.Mode "-"}}</span></div>
+    <div><b>默认代理</b><span id="monitor-target-inline">{{or .MonitorStatus.ActualDefaultTarget "-"}}</span></div>
+    <div><b>当前策略说明</b><span id="monitor-strategy-summary">加载中...</span></div>
+  </div>
+  <div class="section-note">这里可以直接配置监控策略，不再写死“香港手动 -> 自建节点”。比如可改成：日本手动 <= 200ms，异常时切到美国节点 <= 500ms。注意：**自动检测切换**是整套功能总开关；关闭后就不会再自动检测、自动切换。组内优选只是总开关开启时的一个子策略。</div>
+  <div class="grid two singbox-work-grid">
+    <div class="card" style="padding:12px; margin:0;">
+      <div class="status-list kv-list compact-kv">
+        <div><b>启用自动检测切换</b><span><input id="monitor-enabled" type="checkbox" {{if .MonitorConfig.Enabled}}checked{{end}}></span></div>
+        <div><b>关闭组内优选</b><span><input id="monitor-disable-primary-optimization" type="checkbox" {{if .MonitorConfig.DisablePrimaryGroupOptimization}}checked{{end}}></span></div>
+        <div><b>自动回切</b><span><input id="monitor-auto-failback" type="checkbox" {{if .MonitorConfig.AutoFailback}}checked{{end}}></span></div>
+      </div>
+      <div class="cron-form">
+        <input id="monitor-default-proxy-group" placeholder="默认代理组名" value="{{.MonitorConfig.DefaultProxyGroup}}">
+        <input id="monitor-primary-group" placeholder="主组名，如 日本手动" value="{{.MonitorConfig.PrimaryGroup}}">
+        <input id="monitor-primary-delay" type="number" min="1" placeholder="主组最大延迟(ms)" value="{{.MonitorConfig.PrimaryMaxStableDelayMS}}">
+        <input id="monitor-fallback-group" placeholder="回退组名，如 美国节点" value="{{.MonitorConfig.FallbackGroup}}">
+        <input id="monitor-fallback-delay" type="number" min="1" placeholder="回退组最大延迟(ms)" value="{{.MonitorConfig.FallbackMaxStableDelayMS}}">
+        <input id="monitor-fail-threshold" type="number" min="1" placeholder="失败阈值" value="{{.MonitorConfig.FailThreshold}}">
+        <input id="monitor-success-threshold" type="number" min="1" placeholder="恢复阈值" value="{{.MonitorConfig.SuccessThreshold}}">
+        <input id="monitor-recheck-interval" type="number" min="1" placeholder="复检间隔(秒)" value="{{.MonitorConfig.RecheckIntervalSec}}">
+      </div>
+    </div>
+    <div class="card" style="padding:12px; margin:0;">
+      <div class="cron-form">
+        <input id="monitor-api-base" placeholder="Clash API，如 http://127.0.0.1:9090" value="{{.MonitorConfig.APIBase}}">
+        <input id="monitor-test-url" placeholder="测试 URL" value="{{.MonitorConfig.TestURL}}">
+        <input id="monitor-timeout-ms" type="number" min="100" placeholder="timeout(ms)" value="{{.MonitorConfig.TimeoutMS}}">
+        <input id="monitor-state-file" placeholder="状态文件路径" value="{{.MonitorConfig.StateFile}}">
+        <input id="monitor-interval-minutes" type="number" min="1" max="30" placeholder="每隔几分钟触发一次，默认 1">
+      </div>
+      <div class="section-note">关闭“组内优选”后，主组异常时不会在主组内部挑最低延迟节点，而是直接按主/备组切换。</div>
+    </div>
+  </div>
+  <div class="actions">
+    <button onclick="saveMonitorConfig()">保存监控策略</button>
+    <button onclick="saveMonitorCron()">保存监控任务</button>
+    <button class="ghost" onclick="runMonitorNow()">立即执行一轮</button>
+    <button class="ghost" onclick="deleteMonitorCron()">删除监控任务</button>
   </div>
 </section>
 {{end}}

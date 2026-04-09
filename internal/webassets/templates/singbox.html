@@ -36,6 +36,7 @@
     <div class="stacked-sections">
       {{template "singbox_version_card" .}}
       {{template "singbox_cron_card" .}}
+      {{template "monitor_cron_card" .}}
     </div>
   </div>
 </section>
@@ -240,8 +241,18 @@ function renderManualErrors(errors) {
   el.innerHTML = errors.map((x) => `<div class="backup-item backup-item-compact"><div><div class="backup-name">${escapeHTML(x || '')}</div></div></div>`).join('');
 }
 
+let templateConfigDirty = false;
+let templateConfigEditing = false;
+
 function getTemplateEl() { return document.getElementById('template-config'); }
 function getConfigEl() { return document.getElementById('config'); }
+function markTemplateConfigDirty() { templateConfigDirty = true; }
+function clearTemplateConfigDirty() { templateConfigDirty = false; }
+function isTemplateConfigProtected() {
+  const el = getTemplateEl();
+  if (!el) return false;
+  return templateConfigDirty || templateConfigEditing || document.activeElement === el;
+}
 
 function formatTemplateConfig() {
   const el = getTemplateEl();
@@ -266,7 +277,7 @@ async function saveTemplateConfig() {
   if (!el) return;
   const j = await postJSON('/api/singbox/template/config/save', { config: el.value });
   if (j && j.ok) {
-    clearManualNodesDirty();
+    clearTemplateConfigDirty();
     await refreshSingboxOverview();
   }
   return j;
@@ -363,8 +374,74 @@ async function upgradeCoreRollback() {
   const j = await postJSON('/api/singbox/upgrade/rollback');
   if (j.ok) await refreshSingboxOverview();
 }
+async function uploadCoreFile() {
+  const input = document.getElementById('sb-core-upload-file');
+  const file = input && input.files && input.files[0];
+  if (!file) {
+    toast('请先选择要上传的内核文件', false);
+    return;
+  }
+  if (!confirm('确认上传并替换 Sing-box 内核？\n\n系统会先备份当前内核，再执行替换与校验。失败将自动回退。')) return;
+
+  const token = await ensureCsrf();
+  const fd = new FormData();
+  fd.append('file', file);
+  setBusy(true, '上传并替换内核中...');
+  try {
+    const r = await fetch('/api/singbox/upgrade/upload', {
+      method: 'POST',
+      headers: {'X-CSRF-Token': token},
+      body: fd
+    });
+    const ct = r.headers.get('content-type') || '';
+    let j = null;
+    if (ct.includes('application/json')) {
+      j = await r.json();
+    } else {
+      const txt = await r.text();
+      j = {ok: false, error: `服务器返回非 JSON: ${txt.slice(0, 200)}`};
+    }
+    toast(j.ok ? (j.message || '上传替换成功') : ('上传替换失败: ' + (j.error || 'unknown')), !!j.ok);
+    if (!j.ok) showErrorDetail(j.error || 'unknown');
+    if (j.ok) {
+      if (input) input.value = '';
+      await refreshSingboxOverview();
+    }
+    return j;
+  } catch (e) {
+    toast('上传请求失败: ' + e.message, false);
+    showErrorDetail(e.stack || e.message);
+    return {ok: false, error: e.message};
+  } finally {
+    setBusy(false);
+  }
+}
 async function saveCron() { const days = Number(document.getElementById('cron-days').value || 0); const hour = Number(document.getElementById('cron-hour').value || 0); const j = await postJSON('/api/singbox/cron', {days, hour}); if (j.ok) await refreshSingboxOverview(); }
 async function deleteCron() { if (!confirm('确认删除定时更新任务？')) return; const j = await fetchDelete('/api/singbox/cron'); if (j.ok) await refreshSingboxOverview(); }
+async function saveMonitorConfig() {
+  const payload = {
+    enabled: !!document.getElementById('monitor-enabled').checked,
+    disable_primary_group_optimization: !!document.getElementById('monitor-disable-primary-optimization').checked,
+    default_proxy_group: document.getElementById('monitor-default-proxy-group').value || '',
+    primary_group: document.getElementById('monitor-primary-group').value || '',
+    primary_max_stable_delay_ms: Number(document.getElementById('monitor-primary-delay').value || 150),
+    fallback_group: document.getElementById('monitor-fallback-group').value || '',
+    fallback_max_stable_delay_ms: Number(document.getElementById('monitor-fallback-delay').value || 500),
+    fail_threshold: Number(document.getElementById('monitor-fail-threshold').value || 2),
+    success_threshold: Number(document.getElementById('monitor-success-threshold').value || 2),
+    recheck_interval_sec: Number(document.getElementById('monitor-recheck-interval').value || 1),
+    auto_failback: !!document.getElementById('monitor-auto-failback').checked,
+    api_base: document.getElementById('monitor-api-base').value || '',
+    test_url: document.getElementById('monitor-test-url').value || '',
+    timeout_ms: Number(document.getElementById('monitor-timeout-ms').value || 5000),
+    state_file: document.getElementById('monitor-state-file').value || ''
+  };
+  const j = await postJSON('/api/monitor/config', payload);
+  if (j.ok) await refreshSingboxOverview();
+}
+async function saveMonitorCron() { const interval_minutes = Number(document.getElementById('monitor-interval-minutes').value || 1); const j = await postJSON('/api/monitor/cron', {interval_minutes}); if (j.ok) await refreshSingboxOverview(); }
+async function deleteMonitorCron() { if (!confirm('确认删除节点监控定时任务？')) return; const j = await fetchDelete('/api/monitor/cron'); if (j.ok) await refreshSingboxOverview(); }
+async function runMonitorNow() { const j = await postJSON('/api/monitor/run'); if (j.ok) await refreshSingboxOverview(); return j; }
 
 async function previewBackupDiff(name) {
   const r = await fetch('/api/singbox/backups/diff?name=' + encodeURIComponent(name));
@@ -414,6 +491,16 @@ function renderBackups(list, status) {
   document.getElementById('backup-current-match').textContent = (status && status.current_matches_name) || '无完全匹配';
   if (!list || !list.length) { el.innerHTML = '<div class="muted empty-text">暂无备份</div>'; return; }
   el.innerHTML = list.map(x => `<div class="backup-item ${x.is_latest ? 'backup-item-latest' : ''} ${x.is_current ? 'backup-item-current' : ''}"><div><div class="backup-name">${escapeHTML(x.name || '')}</div><div class="muted">${escapeHTML(x.mod_time || '')} · ${escapeHTML(x.size_text || '')} · ${escapeHTML(x.age_text || '')}${x.is_latest ? ' · 最新' : ''}${x.is_current ? ' · 与当前配置一致' : ''}</div></div><div class="actions toolbar-slim"><button class="ghost" onclick="previewBackupDiff('${escapeJS(x.name || '')}')">查看差异</button><button onclick="restoreBackup('${escapeJS(x.name || '')}')">回滚</button><button class="warn" onclick="deleteBackup('${escapeJS(x.name || '')}')">删除</button></div></div>`).join('');
+}
+
+function buildMonitorStrategySummary(mc) {
+  if (!mc) return '-';
+  if (!mc.enabled) return '自动检测切换已关闭';
+  const primary = (mc.primary_group || '主组') + ' <= ' + String(mc.primary_max_stable_delay_ms || 0) + 'ms';
+  const fallback = (mc.fallback_group || '备组') + ' <= ' + String(mc.fallback_max_stable_delay_ms || 0) + 'ms';
+  const optimization = mc.disable_primary_group_optimization ? '组内优选：关闭' : '组内优选：开启';
+  const failback = mc.auto_failback ? '自动回切：开启' : '自动回切：关闭';
+  return '主组 ' + primary + '，异常时切到 ' + fallback + '，' + optimization + '，' + failback;
 }
 
 function applyOverview(data) {
@@ -478,6 +565,34 @@ function applyOverview(data) {
     setHTML('cron-enabled', data.cron.enabled ? '<span class="ok">已开启</span>' : '<span class="bad">未开启</span>');
     setText('cron-summary', data.cron.summary || '');
   }
+  if (data.monitorCron) {
+    setHTML('monitor-cron-enabled', data.monitorCron.enabled ? '<span class="ok">已开启</span>' : '<span class="bad">未开启</span>');
+    setText('monitor-cron-summary', data.monitorCron.enabled ? ((data.monitorCron.summary || '已开启') + '（每轮含 30 秒补跑）') : '未开启');
+  }
+  if (data.monitorStatus) {
+    setText('monitor-mode-inline', data.monitorStatus.mode || '-');
+    setText('monitor-target-inline', data.monitorStatus.actualDefaultTarget || data.monitorStatus.actual_default_target || '-');
+  }
+  if (data.monitorConfig) {
+    const mc = data.monitorConfig;
+    const setChecked = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
+    setChecked('monitor-enabled', mc.enabled);
+    setChecked('monitor-disable-primary-optimization', mc.disable_primary_group_optimization);
+    setChecked('monitor-auto-failback', mc.auto_failback);
+    setVal('monitor-default-proxy-group', mc.default_proxy_group || '');
+    setVal('monitor-primary-group', mc.primary_group || '');
+    setVal('monitor-primary-delay', mc.primary_max_stable_delay_ms || 150);
+    setVal('monitor-fallback-group', mc.fallback_group || '');
+    setVal('monitor-fallback-delay', mc.fallback_max_stable_delay_ms || 500);
+    setVal('monitor-fail-threshold', mc.fail_threshold || 2);
+    setVal('monitor-success-threshold', mc.success_threshold || 2);
+    setVal('monitor-recheck-interval', mc.recheck_interval_sec || 1);
+    setVal('monitor-api-base', mc.api_base || '');
+    setVal('monitor-test-url', mc.test_url || '');
+    setVal('monitor-timeout-ms', mc.timeout_ms || 5000);
+    setVal('monitor-state-file', mc.state_file || '');
+    setText('monitor-strategy-summary', buildMonitorStrategySummary(mc));
+  }
 
   if (data.configStatus) {
     setHTML('config-json-valid', data.configStatus.server_json_valid ? '<span class="ok">有效</span>' : '<span class="bad">无效</span>');
@@ -492,7 +607,9 @@ function applyOverview(data) {
 
   // 完整配置只读展示
   setVal('config', data.config || '');
-  setVal('template-config', data.templateConfig || '');
+  if (!isTemplateConfigProtected()) {
+    setVal('template-config', data.templateConfig || '');
+  }
 }
 
 async function refreshSingboxOverview() {
@@ -513,8 +630,17 @@ document.addEventListener('DOMContentLoaded', () => {
   if (fullInput) fullInput.addEventListener('input', markFullSubDirty);
   const manualInput = document.getElementById('manual-nodes-input');
   if (manualInput) manualInput.addEventListener('input', markManualNodesDirty);
+  const templateInput = getTemplateEl();
+  if (templateInput) {
+    templateInput.addEventListener('input', markTemplateConfigDirty);
+    templateInput.addEventListener('focus', () => { templateConfigEditing = true; });
+    templateInput.addEventListener('blur', () => { templateConfigEditing = false; });
+  }
 });
 
-startManagedPolling(function(){ refreshSingboxOverview(); }, 5000);
+startManagedPolling(function(){
+  if (isTemplateConfigProtected()) return;
+  refreshSingboxOverview();
+}, 5000);
 </script>
 </main></div></body></html>

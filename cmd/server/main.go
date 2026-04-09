@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
@@ -90,6 +92,58 @@ func main() {
 				log.Printf("subscription import completed")
 			}
 			return
+		case "monitor-run":
+			cfg, err := cfgpkg.Load(cfgPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			systemd := services.NewSystemdService()
+			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
+			monitor := services.NewMonitorService(cfg.Monitor, singbox)
+			res, err := monitor.RunOnce()
+			if err != nil {
+				log.Fatal(err)
+			}
+			if res != nil && strings.TrimSpace(res.Message) != "" {
+				fmt.Println(res.Message)
+			}
+			return
+		case "monitor-status":
+			cfg, err := cfgpkg.Load(cfgPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			systemd := services.NewSystemdService()
+			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
+			monitor := services.NewMonitorService(cfg.Monitor, singbox)
+			st, err := monitor.Status()
+			if err != nil {
+				log.Fatal(err)
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(st); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case "monitor-history":
+			cfg, err := cfgpkg.Load(cfgPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			systemd := services.NewSystemdService()
+			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
+			monitor := services.NewMonitorService(cfg.Monitor, singbox)
+			summary, err := monitor.HistorySummary()
+			if err != nil {
+				log.Fatal(err)
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(summary); err != nil {
+				log.Fatal(err)
+			}
+			return
 		}
 	}
 
@@ -110,14 +164,16 @@ func main() {
 		log.Fatal(err)
 	}
 	systemd := services.NewSystemdService()
+	singboxSvc := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 	app := &handlers.App{
 		Config:       cfg,
 		ConfigPath:   cfgPath,
 		Sessions:     authpkg.NewSessionManager("singdns_session"),
 		Limiter:      authpkg.NewLoginLimiter(5, 15*time.Minute),
 		Templates:    tpls,
-		SingBox:      services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath),
+		SingBox:      singboxSvc,
 		MosDNS:       services.NewMosDNSService(cfg.Services.MosDNS, systemd),
+		Monitor:      services.NewMonitorService(cfg.Monitor, singboxSvc),
 		Audit:        services.NewAuditService(cfg.AuditLog),
 		Panel:        services.NewPanelService(Version, cfg.PanelUpdate),
 		PanelVersion: Version,
@@ -174,10 +230,17 @@ func main() {
 		pr.Post("/api/singbox/manual-nodes/import", app.SingBoxManualNodesImportAPI)
 		pr.Get("/api/singbox/version", app.SingBoxVersionAPI)
 		pr.Post("/api/singbox/upgrade", app.SingBoxUpgradeAPI)
+		pr.Post("/api/singbox/upgrade/upload", app.SingBoxUpgradeUploadAPI)
 		pr.Post("/api/singbox/upgrade/rollback", app.SingBoxUpgradeRollbackAPI)
 		pr.Get("/api/singbox/cron", app.SingBoxCronGetAPI)
 		pr.Post("/api/singbox/cron", app.SingBoxCronSetAPI)
 		pr.Delete("/api/singbox/cron", app.SingBoxCronDeleteAPI)
+		pr.Get("/api/monitor/config", app.MonitorConfigAPI)
+		pr.Post("/api/monitor/config", app.MonitorConfigSaveAPI)
+		pr.Get("/api/monitor/cron", app.MonitorCronGetAPI)
+		pr.Post("/api/monitor/cron", app.MonitorCronSetAPI)
+		pr.Delete("/api/monitor/cron", app.MonitorCronDeleteAPI)
+		pr.Post("/api/monitor/run", app.MonitorRunAPI)
 		pr.Get("/api/singbox/backups", app.SingBoxBackupsAPI)
 		pr.Get("/api/singbox/backups/diff", app.SingBoxBackupDiffAPI)
 		pr.Post("/api/singbox/backups/create", app.SingBoxCreateBackupAPI)
