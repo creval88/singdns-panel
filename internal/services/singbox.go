@@ -178,7 +178,35 @@ type IPForwardStatus struct {
 }
 
 func NewSingBoxService(cfg cfgpkg.ServiceConfig, systemd *SystemdService, panelConfigPath string) *SingBoxService {
+	cfg.BinPath = resolveSingBoxBinPath(cfg.BinPath)
 	return &SingBoxService{cfg: cfg, systemd: systemd, panelConfigPath: strings.TrimSpace(panelConfigPath)}
+}
+
+func resolveSingBoxBinPath(configured string) string {
+	candidates := []string{}
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		candidates = append(candidates, configured)
+	}
+	candidates = append(candidates, "/usr/bin/sing-box", "/usr/local/bin/sing-box")
+	seen := map[string]struct{}{}
+	for _, path := range candidates {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			return path
+		}
+	}
+	if configured != "" {
+		return configured
+	}
+	return "/usr/bin/sing-box"
 }
 
 func (s *SingBoxService) Status() (*ServiceStatus, error) { return s.systemd.Status(s.cfg.ServiceName) }
@@ -773,8 +801,8 @@ func (s *SingBoxService) Upgrade() error {
 	}
 	defer os.Remove(binPath)
 
-	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
-	_, _ = utils.Run(10*time.Second, "sudo", "mkdir", "-p", filepath.Dir(s.cfg.BinPath))
+	_, _ = runSudoNoPrompt(20*time.Second, "/bin/systemctl", "stop", s.cfg.ServiceName)
+	_, _ = runSudoNoPrompt(10*time.Second, "/bin/mkdir", "-p", filepath.Dir(s.cfg.BinPath))
 	if err := s.installCoreBinary(binPath); err != nil {
 		s.logCoreEvent("error", "upgrade", "install", err.Error(), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
@@ -785,8 +813,8 @@ func (s *SingBoxService) Upgrade() error {
 			return fmt.Errorf("安装新内核失败，且自动回退失败: install_err=%v, rollback_err=%v", err, rbErr)
 		}
 	}
-	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
-		s.logCoreEvent("error", "upgrade", "start", err.Error(), time.Since(startedAt))
+	if res, err := runSudoNoPrompt(20*time.Second, "/bin/systemctl", "start", s.cfg.ServiceName); err != nil {
+		s.logCoreEvent("error", "upgrade", "start", commandOutputOrError(res, err), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
 			s.logCoreEvent("ok", "rollback", "auto", "新内核启动失败，已自动回退到升级前版本", time.Since(startedAt))
 			return fmt.Errorf("新内核启动失败，已自动回退到升级前版本: %w", err)
@@ -863,7 +891,8 @@ func (s *SingBoxService) UpgradeFromUploadedCore(uploadPath, originalName string
 		return nil, err
 	}
 
-	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
+	_, _ = runSudoNoPrompt(20*time.Second, "/bin/systemctl", "stop", s.cfg.ServiceName)
+	_, _ = runSudoNoPrompt(10*time.Second, "/bin/mkdir", "-p", filepath.Dir(s.cfg.BinPath))
 	if err := s.installCoreBinary(resolvedBin); err != nil {
 		s.logCoreEvent("error", "upgrade.upload", "install", err.Error(), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
@@ -872,8 +901,8 @@ func (s *SingBoxService) UpgradeFromUploadedCore(uploadPath, originalName string
 		}
 		return nil, fmt.Errorf("安装上传内核失败，且自动回退失败: install_err=%v", err)
 	}
-	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
-		s.logCoreEvent("error", "upgrade.upload", "start", err.Error(), time.Since(startedAt))
+	if res, err := runSudoNoPrompt(20*time.Second, "/bin/systemctl", "start", s.cfg.ServiceName); err != nil {
+		s.logCoreEvent("error", "upgrade.upload", "start", commandOutputOrError(res, err), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
 			s.logCoreEvent("ok", "rollback", "auto", "上传内核启动失败，已自动回退到升级前版本", time.Since(startedAt))
 			return nil, fmt.Errorf("上传内核启动失败，已自动回退到升级前版本: %w", err)
@@ -1104,19 +1133,32 @@ func (s *SingBoxService) prepareCoreRollbackBinary() (string, error) {
 	return backupBin, nil
 }
 
+func runSudoNoPrompt(timeout time.Duration, name string, args ...string) (*utils.CommandResult, error) {
+	allArgs := append([]string{"-n", name}, args...)
+	return utils.Run(timeout, "sudo", allArgs...)
+}
+
+func commandOutputOrError(res *utils.CommandResult, err error) string {
+	if res != nil {
+		if msg := strings.TrimSpace(res.Stderr); msg != "" {
+			return msg
+		}
+		if msg := strings.TrimSpace(res.Stdout); msg != "" {
+			return msg
+		}
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "unknown error"
+}
+
 func (s *SingBoxService) installCoreBinary(binPath string) error {
-	res, err := utils.Run(30*time.Second, "sudo", "install", "-m", "755", binPath, s.cfg.BinPath)
+	res, err := runSudoNoPrompt(30*time.Second, "/usr/bin/install", "-m", "755", binPath, s.cfg.BinPath)
 	if err == nil {
 		return nil
 	}
-	msg := strings.TrimSpace(res.Stderr)
-	if msg == "" {
-		msg = strings.TrimSpace(res.Stdout)
-	}
-	if msg == "" {
-		msg = err.Error()
-	}
-	return fmt.Errorf("安装内核失败（目标 %s）: %s", s.cfg.BinPath, msg)
+	return fmt.Errorf("安装内核失败（目标 %s）: %s", s.cfg.BinPath, commandOutputOrError(res, err))
 }
 
 func (s *SingBoxService) rollbackCoreFromBinary(binPath string) error {
@@ -1129,12 +1171,12 @@ func (s *SingBoxService) rollbackCoreFromBinary(binPath string) error {
 		}
 		return fmt.Errorf("回退失败：备份文件为空 %s", binPath)
 	}
-	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
+	_, _ = runSudoNoPrompt(20*time.Second, "/bin/systemctl", "stop", s.cfg.ServiceName)
 	if err := s.installCoreBinary(binPath); err != nil {
 		return err
 	}
-	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "start", s.cfg.ServiceName); err != nil {
-		return err
+	if res, err := runSudoNoPrompt(20*time.Second, "/bin/systemctl", "start", s.cfg.ServiceName); err != nil {
+		return fmt.Errorf("回退后启动服务失败: %s", commandOutputOrError(res, err))
 	}
 	if err := s.verifyCoreVersion(); err != nil {
 		return err
@@ -1146,7 +1188,7 @@ func (s *SingBoxService) verifyCoreVersion() error {
 	if _, err := utils.Run(10*time.Second, s.cfg.BinPath, "version"); err == nil {
 		return nil
 	}
-	if _, err := utils.Run(10*time.Second, "sudo", s.cfg.BinPath, "version"); err == nil {
+	if _, err := runSudoNoPrompt(10*time.Second, s.cfg.BinPath, "version"); err == nil {
 		return nil
 	}
 	return fmt.Errorf("version check failed")

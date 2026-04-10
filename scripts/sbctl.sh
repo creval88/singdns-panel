@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-BIN_PATH="/usr/local/bin/sing-box"
+BIN_PATH="/usr/bin/sing-box"
 CONF_DIR="/etc/sing-box"
 CONF_FILE="${CONF_DIR}/config.json"
 URL_FILE="${CONF_DIR}/url.txt"

@@ -45,8 +45,10 @@ install -m 755 scripts/mdctl.sh /usr/local/bin/mdctl.sh
 ```bash
 cp deploy/sudoers.singdns-panel /etc/sudoers.d/singdns-panel
 chmod 440 /etc/sudoers.d/singdns-panel
-visudo -c
+visudo -cf /etc/sudoers.d/singdns-panel
 ```
+
+注意：当前默认 sing-box 安装路径已切到 `/usr/bin/sing-box`，sudoers 模板需同时覆盖上传升级链使用的 install 权限；如果目标机仍沿用旧路径 `/usr/local/bin/sing-box`，也保持兼容。
 
 ## 7. 编译
 ```bash

@@ -85,6 +85,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Services.SingBox.ServiceName == "" {
 		cfg.Services.SingBox.ServiceName = "sing-box"
 	}
+	if cfg.Services.SingBox.BinPath == "" {
+		cfg.Services.SingBox.BinPath = "/usr/bin/sing-box"
+	}
 	if cfg.Services.MosDNS.ServiceName == "" {
 		cfg.Services.MosDNS.ServiceName = "mosdns"
 	}

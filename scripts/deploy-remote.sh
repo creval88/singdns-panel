@@ -153,7 +153,7 @@ cat > /opt/singdns-panel/app/configs/panel.json << PANELEOF
       "service_name": "sing-box",
       "config_path": "/etc/sing-box/config.json",
       "url_path": "/etc/sing-box/url.txt",
-      "bin_path": "/usr/local/bin/sing-box",
+      "bin_path": "/usr/bin/sing-box",
       "ctl_path": "/usr/local/bin/sbctl.sh"
     },
     "mosdns": {
