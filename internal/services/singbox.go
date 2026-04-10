@@ -864,7 +864,6 @@ func (s *SingBoxService) UpgradeFromUploadedCore(uploadPath, originalName string
 	}
 
 	_, _ = utils.Run(20*time.Second, "sudo", "systemctl", "stop", s.cfg.ServiceName)
-	_, _ = utils.Run(10*time.Second, "sudo", "mkdir", "-p", filepath.Dir(s.cfg.BinPath))
 	if err := s.installCoreBinary(resolvedBin); err != nil {
 		s.logCoreEvent("error", "upgrade.upload", "install", err.Error(), time.Since(startedAt))
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
@@ -950,7 +949,7 @@ func extractCoreFromTarReader(tr *tar.Reader) (string, func(), error) {
 		if !looksLikeSingBoxBinaryName(hdr.Name) {
 			continue
 		}
-		tmpBin, err := os.CreateTemp("", "sing-box-upload-bin-*")
+		tmpBin, err := os.CreateTemp("", "sing-box-bin-*")
 		if err != nil {
 			return "", nil, err
 		}
@@ -995,7 +994,7 @@ func extractUploadedCoreFromZip(path string) (string, func(), error) {
 		if err != nil {
 			return "", nil, fmt.Errorf("读取 zip 条目失败: %w", err)
 		}
-		tmpBin, err := os.CreateTemp("", "sing-box-upload-bin-*")
+		tmpBin, err := os.CreateTemp("", "sing-box-bin-*")
 		if err != nil {
 			rc.Close()
 			return "", nil, err
@@ -1058,7 +1057,7 @@ func validateUploadedCoreBinary(path, installPath string) error {
 		}
 	}
 
-	checkCmds := [][]string{{path, "version"}, {"sudo", path, "version"}}
+	checkCmds := [][]string{{path, "version"}}
 	var lastErr error
 	for _, cmd := range checkCmds {
 		if _, err := utils.Run(10*time.Second, cmd[0], cmd[1:]...); err == nil {
@@ -1095,7 +1094,7 @@ func (s *SingBoxService) coreRollbackBinaryPath() string {
 }
 
 func (s *SingBoxService) prepareCoreRollbackBinary() (string, error) {
-	backupBin, err := copyFileToTempWithPattern(s.cfg.BinPath, os.TempDir(), "sing-box-bin-prev-*")
+	backupBin, err := copyFileToTempWithPattern(s.cfg.BinPath, os.TempDir(), "sing-box-bin-*")
 	if err != nil {
 		return "", err
 	}
