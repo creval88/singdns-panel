@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"singdns-panel/internal/services"
@@ -36,188 +37,210 @@ type DashboardSubscriptionDigest struct {
 	Recent      []services.SubscriptionUpdateEvent `json:"recent"`
 }
 
-func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
-	sb, _ := a.SingBox.Status()
-	if sb == nil {
-		sb = &services.ServiceStatus{Name: "sing-box"}
-	}
-	md, _ := a.MosDNS.Status()
-	if md == nil {
-		md = &services.ServiceStatus{Name: "mosdns"}
-	}
-	panelSvc, _ := services.NewSystemdService().Status("singdns-panel")
-	if panelSvc == nil {
-		panelSvc = &services.ServiceStatus{Name: "singdns-panel"}
-	}
-	cron, _ := a.SingBox.CronShow()
-	if cron == nil {
-		cron = &services.CronInfo{}
-	}
-	url, _ := a.SingBox.ReadSubscriptionURL()
-	subscription, _ := a.SingBox.SubscriptionStatus()
-	if subscription == nil {
-		subscription = &services.SubscriptionStatus{}
-	}
-	updates, _ := a.SingBox.SubscriptionUpdateEvents(12)
-	if updates == nil {
-		updates = []services.SubscriptionUpdateEvent{}
-	}
-	digest := summarizeSubscriptionUpdates(updates)
-	health := buildDashboardHealth(sb, md, panelSvc, subscription, updates)
+type dashboardSnapshot struct {
+	sb               *services.ServiceStatus
+	md               *services.ServiceStatus
+	panelSvc         *services.ServiceStatus
+	cron             *services.CronInfo
+	url              string
+	subscription     *services.SubscriptionStatus
+	updates          []services.SubscriptionUpdateEvent
+	digest           DashboardSubscriptionDigest
+	health           DashboardHealthOverview
+	sbVersion        string
+	latestVersion    string
+	updatedAt        string
+	backups          []services.BackupInfo
+	backupStatus     *services.BackupStatus
+	configStatus     *services.ConfigStatus
+	audits           []services.AuditEntry
+	actionTimeline   []services.AuditEntry
+	clashAPI         *services.ClashAPIInfo
+	hostStats        *services.HostStats
+	latestBackupTime string
+	latestBackupAgo  string
+	recentAudit      string
+}
 
-	sbVersion, _ := a.SingBox.Version()
-	latestVersion, _ := a.SingBox.LatestVersion()
-	updatedAt, _ := a.SingBox.ConfigUpdatedAt()
-	backups, _ := a.SingBox.ListBackups()
-	if backups == nil {
-		backups = []services.BackupInfo{}
+func (a *App) collectDashboardSnapshot(panelHost string) dashboardSnapshot {
+	out := dashboardSnapshot{
+		sb:               &services.ServiceStatus{Name: "sing-box"},
+		md:               &services.ServiceStatus{Name: "mosdns"},
+		panelSvc:         &services.ServiceStatus{Name: "singdns-panel"},
+		cron:             &services.CronInfo{},
+		subscription:     &services.SubscriptionStatus{},
+		updates:          []services.SubscriptionUpdateEvent{},
+		backups:          []services.BackupInfo{},
+		backupStatus:     &services.BackupStatus{},
+		configStatus:     &services.ConfigStatus{},
+		audits:           []services.AuditEntry{},
+		actionTimeline:   []services.AuditEntry{},
+		clashAPI:         &services.ClashAPIInfo{},
+		latestBackupTime: "暂无",
+		latestBackupAgo:  "暂无",
+		recentAudit:      "暂无",
 	}
-	backupStatus, _ := a.SingBox.BackupStatus()
-	if backupStatus == nil {
-		backupStatus = &services.BackupStatus{}
+
+	var wg sync.WaitGroup
+	wg.Add(14)
+
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.Status(); err == nil && v != nil {
+			out.sb = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.MosDNS.Status(); err == nil && v != nil {
+			out.md = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := services.NewSystemdService().Status("singdns-panel"); err == nil && v != nil {
+			out.panelSvc = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.CronShow(); err == nil && v != nil {
+			out.cron = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		out.url, _ = a.SingBox.ReadSubscriptionURL()
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.SubscriptionStatus(); err == nil && v != nil {
+			out.subscription = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.SubscriptionUpdateEvents(12); err == nil && v != nil {
+			out.updates = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		out.sbVersion, _ = a.SingBox.Version()
+	}()
+	go func() {
+		defer wg.Done()
+		out.latestVersion, _ = a.SingBox.LatestVersion()
+	}()
+	go func() {
+		defer wg.Done()
+		out.updatedAt, _ = a.SingBox.ConfigUpdatedAt()
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.ListBackups(); err == nil && v != nil {
+			out.backups = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.BackupStatus(); err == nil && v != nil {
+			out.backupStatus = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.ConfigStatus(); err == nil && v != nil {
+			out.configStatus = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.ClashAPIInfo(panelHost); err == nil && v != nil {
+			out.clashAPI = v
+		}
+	}()
+
+	out.audits, _ = a.Audit.List(20)
+	out.hostStats, _ = services.ReadHostStats()
+
+	wg.Wait()
+
+	out.digest = summarizeSubscriptionUpdates(out.updates)
+	out.health = buildDashboardHealth(out.sb, out.md, out.panelSvc, out.subscription, out.updates)
+	out.actionTimeline = summarizeActionTimeline(out.audits, 3)
+	if len(out.backups) > 0 {
+		out.latestBackupTime = out.backups[0].ModTime
+		out.latestBackupAgo = humanizeAge(out.backups[0].AgeText)
 	}
-	configStatus, _ := a.SingBox.ConfigStatus()
-	if configStatus == nil {
-		configStatus = &services.ConfigStatus{}
-	}
-	audits, _ := a.Audit.List(20)
-	actionTimeline := summarizeActionTimeline(audits, 3)
-	clashAPI, _ := a.SingBox.ClashAPIInfo(r.Host)
-	if clashAPI == nil {
-		clashAPI = &services.ClashAPIInfo{}
-	}
-	hostStats, _ := services.ReadHostStats()
-	latestBackupTime := "暂无"
-	latestBackupAgo := "暂无"
-	if len(backups) > 0 {
-		latestBackupTime = backups[0].ModTime
-		latestBackupAgo = humanizeAge(backups[0].AgeText)
-	}
-	recentAudit := "暂无"
-	if len(audits) > 0 {
-		recentAudit = audits[0].Action
-		if audits[0].Result != "" {
-			recentAudit += " · " + audits[0].Result
+	if len(out.audits) > 0 {
+		out.recentAudit = out.audits[0].Action
+		if out.audits[0].Result != "" {
+			out.recentAudit += " · " + out.audits[0].Result
 		}
 	}
+	return out
+}
+
+func (a *App) Dashboard(w http.ResponseWriter, r *http.Request) {
+	snap := a.collectDashboardSnapshot(r.Host)
 	a.render(w, "dashboard.html", map[string]any{
 		"Title":            "Dashboard",
 		"ActiveNav":        "dashboard",
 		"PageTitle":        "系统仪表盘",
 		"Eyebrow":          "Overview",
 		"HeaderHint":       "每 5 秒自动刷新",
-		"SingBox":          sb,
-		"MosDNS":           md,
-		"PanelService":     panelSvc,
-		"Health":           health,
-		"SubDigest":        digest,
-		"SubEvents":        digest.Recent,
-		"Cron":             cron,
-		"SubURL":           maskURL(url),
-		"Subscription":     subscription,
+		"SingBox":          snap.sb,
+		"MosDNS":           snap.md,
+		"PanelService":     snap.panelSvc,
+		"Health":           snap.health,
+		"SubDigest":        snap.digest,
+		"SubEvents":        snap.digest.Recent,
+		"Cron":             snap.cron,
+		"SubURL":           maskURL(snap.url),
+		"Subscription":     snap.subscription,
 		"MosDNSWeb":        a.MosDNS.WebURL(),
-		"SBVersion":        sbVersion,
-		"SBVersionShort":   shortVersion(sbVersion),
-		"LatestVersion":    latestVersion,
-		"UpdatedAt":        updatedAt,
-		"BackupCount":      len(backups),
-		"BackupStatus":     backupStatus,
-		"ConfigStatus":     configStatus,
-		"LatestBackupTime": latestBackupTime,
-		"LatestBackupAgo":  latestBackupAgo,
-		"RecentAudit":      recentAudit,
-		"ActionTimeline":   actionTimeline,
-		"ClashAPI":         clashAPI,
+		"SBVersion":        snap.sbVersion,
+		"SBVersionShort":   shortVersion(snap.sbVersion),
+		"LatestVersion":    snap.latestVersion,
+		"UpdatedAt":        snap.updatedAt,
+		"BackupCount":      len(snap.backups),
+		"BackupStatus":     snap.backupStatus,
+		"ConfigStatus":     snap.configStatus,
+		"LatestBackupTime": snap.latestBackupTime,
+		"LatestBackupAgo":  snap.latestBackupAgo,
+		"RecentAudit":      snap.recentAudit,
+		"ActionTimeline":   snap.actionTimeline,
+		"ClashAPI":         snap.clashAPI,
 		"PanelVersion":     prettyPanelVersion(a.PanelVersion),
-		"HostStats":        hostStats,
+		"HostStats":        snap.hostStats,
 	})
 }
 
 func (a *App) DashboardAPI(w http.ResponseWriter, r *http.Request) {
-	sb, _ := a.SingBox.Status()
-	if sb == nil {
-		sb = &services.ServiceStatus{Name: "sing-box"}
-	}
-	md, _ := a.MosDNS.Status()
-	if md == nil {
-		md = &services.ServiceStatus{Name: "mosdns"}
-	}
-	panelSvc, _ := services.NewSystemdService().Status("singdns-panel")
-	if panelSvc == nil {
-		panelSvc = &services.ServiceStatus{Name: "singdns-panel"}
-	}
-	cron, _ := a.SingBox.CronShow()
-	if cron == nil {
-		cron = &services.CronInfo{}
-	}
-	url, _ := a.SingBox.ReadSubscriptionURL()
-	subscription, _ := a.SingBox.SubscriptionStatus()
-	if subscription == nil {
-		subscription = &services.SubscriptionStatus{}
-	}
-	updates, _ := a.SingBox.SubscriptionUpdateEvents(12)
-	if updates == nil {
-		updates = []services.SubscriptionUpdateEvent{}
-	}
-	digest := summarizeSubscriptionUpdates(updates)
-	health := buildDashboardHealth(sb, md, panelSvc, subscription, updates)
-
-	latestVersion, _ := a.SingBox.LatestVersion()
-	updatedAt, _ := a.SingBox.ConfigUpdatedAt()
-	backups, _ := a.SingBox.ListBackups()
-	if backups == nil {
-		backups = []services.BackupInfo{}
-	}
-	backupStatus, _ := a.SingBox.BackupStatus()
-	if backupStatus == nil {
-		backupStatus = &services.BackupStatus{}
-	}
-	configStatus, _ := a.SingBox.ConfigStatus()
-	if configStatus == nil {
-		configStatus = &services.ConfigStatus{}
-	}
-	audits, _ := a.Audit.List(20)
-	actionTimeline := summarizeActionTimeline(audits, 3)
-	clashAPI, _ := a.SingBox.ClashAPIInfo(r.Host)
-	if clashAPI == nil {
-		clashAPI = &services.ClashAPIInfo{}
-	}
-	hostStats, _ := services.ReadHostStats()
-	latestBackupTime := "暂无"
-	latestBackupAgo := "暂无"
-	if len(backups) > 0 {
-		latestBackupTime = backups[0].ModTime
-		latestBackupAgo = humanizeAge(backups[0].AgeText)
-	}
-	recentAudit := "暂无"
-	if len(audits) > 0 {
-		recentAudit = audits[0].Action
-		if audits[0].Result != "" {
-			recentAudit += " · " + audits[0].Result
-		}
-	}
+	snap := a.collectDashboardSnapshot(r.Host)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"singbox":          sb,
-		"mosdns":           md,
-		"panel":            panelSvc,
-		"health":           health,
-		"subDigest":        digest,
-		"subEvents":        digest.Recent,
-		"cron":             cron,
-		"subURL":           maskURL(url),
-		"subscription":     subscription,
-		"latestVersion":    latestVersion,
-		"updatedAt":        updatedAt,
-		"backupCount":      len(backups),
-		"backupStatus":     backupStatus,
-		"configStatus":     configStatus,
-		"latestBackupTime": latestBackupTime,
-		"latestBackupAgo":  latestBackupAgo,
-		"recentAudit":      recentAudit,
-		"actionTimeline":   actionTimeline,
-		"clashAPI":         clashAPI,
-		"hostStats":        hostStats,
+		"singbox":          snap.sb,
+		"mosdns":           snap.md,
+		"panel":            snap.panelSvc,
+		"health":           snap.health,
+		"subDigest":        snap.digest,
+		"subEvents":        snap.digest.Recent,
+		"cron":             snap.cron,
+		"subURL":           maskURL(snap.url),
+		"subscription":     snap.subscription,
+		"latestVersion":    snap.latestVersion,
+		"updatedAt":        snap.updatedAt,
+		"backupCount":      len(snap.backups),
+		"backupStatus":     snap.backupStatus,
+		"configStatus":     snap.configStatus,
+		"latestBackupTime": snap.latestBackupTime,
+		"latestBackupAgo":  snap.latestBackupAgo,
+		"recentAudit":      snap.recentAudit,
+		"actionTimeline":   snap.actionTimeline,
+		"clashAPI":         snap.clashAPI,
+		"hostStats":        snap.hostStats,
 	})
 }
 

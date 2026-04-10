@@ -34,7 +34,6 @@
       </section>
     </div>
     <div class="stacked-sections">
-      {{template "singbox_version_card" .}}
       {{template "singbox_cron_card" .}}
       {{template "monitor_cron_card" .}}
     </div>
@@ -49,10 +48,17 @@
 
 <script src="/static/app.js?v=20260318-hotfix7"></script>
 <script>
+let currentSbTab = 'overview';
+let singboxUpgradeBusy = false;
+
 function showSbTab(name, btn) {
-  document.querySelectorAll('.sb-tab').forEach(x => x.classList.toggle('active', x.dataset.tab === name));
+  currentSbTab = name || 'overview';
+  document.querySelectorAll('.sb-tab').forEach(x => x.classList.toggle('active', x.dataset.tab === currentSbTab));
   document.querySelectorAll('#singbox-tabs .tab').forEach(x => x.classList.remove('active'));
   if (btn) btn.classList.add('active');
+  if (currentSbTab === 'nodes') loadClashFrame();
+  singboxPolling.reset();
+  refreshCurrentSingboxTab(!sbTabLoaded[currentSbTab]);
 }
 function statusText(status) {
   if (status === 'ok') return '成功';
@@ -278,13 +284,13 @@ async function saveTemplateConfig() {
   const j = await postJSON('/api/singbox/template/config/save', { config: el.value });
   if (j && j.ok) {
     clearTemplateConfigDirty();
-    await refreshSingboxOverview();
+    await refreshConfigTab(true);
   }
   return j;
 }
 
 function syncConfigFromServer() {
-  refreshSingboxOverview();
+  refreshConfigTab(true);
   toast('已刷新完整配置');
 }
 
@@ -301,11 +307,11 @@ function confirmUpdateNodeSub() {
   if (confirm('确认立即更新节点模板订阅？\n\n将执行：拉取多条节点订阅 → 忽略失败项（只要不是全部失败）→ 按模版规则筛选/展开 → 校验 → 自动备份当前完整配置 → 覆盖配置 → 重启 Sing-box。')) updateNodeSubscription();
 }
 async function runSingboxAction(action) { const j = await api('/api/singbox/action/' + action); if (j.ok) await refreshSingboxOverview(); }
-async function saveFullSub() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/full', {url}); if (j.ok) { clearFullSubDirty(); await refreshSingboxOverview(); } }
-async function saveSub() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription', {urls}); if (j.ok) { clearNodeSubDirty(); await refreshSingboxOverview(); } }
-async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSingboxOverview(); return j; }
-async function updateFullSubscription() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/update/full', {url}); if (j && j.ok) clearFullSubDirty(); await refreshSingboxOverview(); return j; }
-async function updateNodeSubscription() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription/update/nodes', {urls}); if (j && j.ok) clearNodeSubDirty(); await refreshSingboxOverview(); return j; }
+async function saveFullSub() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/full', {url}); if (j.ok) { clearFullSubDirty(); await refreshSubscriptionTab(true); } }
+async function saveSub() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription', {urls}); if (j.ok) { clearNodeSubDirty(); await refreshSubscriptionTab(true); } }
+async function updateSubscription() { const j = await postJSON('/api/singbox/subscription/update'); await refreshSubscriptionTab(true); return j; }
+async function updateFullSubscription() { const url = (document.getElementById('suburl-full').value || '').trim(); const j = await postJSON('/api/singbox/subscription/update/full', {url}); if (j && j.ok) clearFullSubDirty(); await refreshSubscriptionTab(true); return j; }
+async function updateNodeSubscription() { const urls = normalizeNodeURLs(nodeSubURLs); const j = await postJSON('/api/singbox/subscription/update/nodes', {urls}); if (j && j.ok) clearNodeSubDirty(); await refreshSubscriptionTab(true); return j; }
 
 async function saveManualNodesDraft() {
   const input = document.getElementById('manual-nodes-input');
@@ -313,7 +319,7 @@ async function saveManualNodesDraft() {
   const j = await postJSON('/api/singbox/manual-nodes', { nodes });
   if (j && j.ok) {
     clearManualNodesDirty();
-    await refreshSingboxOverview();
+    await refreshSubscriptionTab(true);
   }
   return j;
 }
@@ -329,9 +335,10 @@ async function importManualNodes() {
   } else if (j && !j.ok) {
     renderManualSummary({ message: j.error || '导入失败' });
     renderManualLineResults([]);
+    renderManualErrors([]);
   }
   if (j && j.ok) {
-    await refreshSingboxOverview();
+    await refreshSubscriptionTab(true);
   }
   return j;
 }
@@ -345,8 +352,8 @@ async function validateConfig() {
 async function createBackup() {
   const j = await postJSON('/api/singbox/backups/create');
   if (j.ok) {
-    await refreshSingboxOverview();
-    setTimeout(() => refreshSingboxOverview(), 500);
+    await refreshBackupTab(true);
+    setTimeout(() => refreshBackupTab(true), 500);
   }
 }
 async function quickRollbackLatestBackup() {
@@ -393,14 +400,47 @@ function renderIPForwardStatus(status, errText) {
   messageEl.textContent = status.message || (status.enabled ? '已开启 IP 转发' : '未开启 IP 转发');
 }
 
+function applyUpgradeOverview(data) {
+  if (!data) return;
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = (v ?? ''); };
+  setText('sb-version', data.version || '');
+  setText('sb-latest-version', data.latestVersion || '');
+  setText('panel-current-version', data.panelVersion || '');
+  setText('panel-release-version', (data.panelRelease && data.panelRelease.version) || '未发现');
+  if (data.panelRelease && data.panelRelease.path) {
+    setText('panel-upgrade-note', '检测到本地升级包：' + data.panelRelease.path);
+  } else {
+    setText('panel-upgrade-note', '将发布包解压到配置的 updates 目录后，可在此检测与执行升级。');
+  }
+  renderIPForwardStatus(data.ipForwardStatus || null, data.ipForwardError || data.ipForwardMessage || '检测失败');
+}
+
+async function refreshSingboxUpgradeOverview(force = false) {
+  if (singboxUpgradeBusy || document.hidden) return;
+  if (!force && currentSbTab !== 'upgrade') return;
+  singboxUpgradeBusy = true;
+  try {
+    const r = await fetch('/api/singbox/upgrade/overview?_=' + Date.now(), { cache: 'no-store' });
+    const j = await r.json();
+    applyUpgradeOverview(j);
+    return j;
+  } finally {
+    singboxUpgradeBusy = false;
+  }
+}
+
 async function refreshIPForwardStatus(silent = false) {
+  if (currentSbTab === 'upgrade') {
+    return await refreshSingboxUpgradeOverview(true);
+  }
   const j = await request('/api/singbox/ip-forward', { method: 'GET', silent, busyText: '检测 IP 转发中...' });
   renderIPForwardStatus(j && j.ok ? j.status : null, j && !j.ok ? (j.error || j.message || '检测失败') : '');
   return j;
 }
 
-async function uploadCoreFile() {
-  const input = document.getElementById('sb-core-upload-file');
+async function uploadCoreFile(btn) {
+  const card = btn && btn.closest ? btn.closest('.card') : null;
+  const input = card ? card.querySelector('input[type="file"]') : document.getElementById('sb-core-upload-file');
   const file = input && input.files && input.files[0];
   if (!file) {
     toast('请先选择要上传的内核文件', false);
@@ -487,12 +527,12 @@ async function restoreBackup(name) {
   const tip = (j0 && j0.diff) ? ('\n\n差异预览：\n' + String(j0.diff).slice(0, 500)) : '';
   if (!confirm('确认回滚到备份：' + name + ' ?\n\n回滚会重新写入配置并重启 Sing-box。' + tip)) return;
   const j = await postJSON('/api/singbox/backups/restore', {name});
-  if (j.ok) await refreshSingboxOverview();
+  if (j.ok) await refreshBackupTab(true);
 }
 async function deleteBackup(name) {
   if (!confirm('确认删除备份：' + name + ' ？此操作不可恢复。')) return;
   const j = await postJSON('/api/singbox/backups/delete', {name});
-  if (j.ok) await refreshSingboxOverview();
+  if (j.ok) await refreshBackupTab(true);
 }
 
 function loadClashFrame(){
@@ -566,6 +606,12 @@ function applyOverview(data) {
   }
   if (!manualNodesDirty) {
     setVal('manual-nodes-input', (data.manualNodesDraft || data.manual_nodes_draft || ''));
+  }
+  const manualLastResult = data.manualNodesLastResult || data.manual_nodes_last_result || null;
+  if (manualLastResult) {
+    renderManualSummary(manualLastResult);
+    renderManualLineResults(manualLastResult.line_results || []);
+    renderManualErrors(manualLastResult.errors || []);
   }
   setText('sb-version', data.version || '');
   setText('sb-latest-version', data.latestVersion || '');
@@ -645,17 +691,141 @@ function applyOverview(data) {
   }
 }
 
-async function refreshSingboxOverview() {
-  const r = await fetch('/api/singbox/overview?_=' + Date.now(), { cache: 'no-store' });
-  const j = await r.json();
-  applyOverview(j);
+const sbTabLoaded = {
+  overview: false,
+  subscription: false,
+  nodes: false,
+  backup: false,
+  config: false,
+  upgrade: false,
+};
+let singboxOverviewBusy = false;
+let singboxTabBusy = false;
+
+async function refreshCurrentSingboxTab(force = false) {
+  if (currentSbTab === 'upgrade') return await refreshSingboxUpgradeOverview(force);
+  if (currentSbTab === 'subscription') return await refreshSubscriptionTab(force);
+  if (currentSbTab === 'backup') return await refreshBackupTab(force);
+  if (currentSbTab === 'config') return await refreshConfigTab(force);
+  if (currentSbTab === 'nodes') {
+    loadClashFrame();
+    return null;
+  }
+  return await refreshSingboxOverview(force);
 }
-function startManagedPolling(fn, ms){
+
+async function refreshSubscriptionTab(force = false) {
+  if (singboxTabBusy || document.hidden) return;
+  if (!force && sbTabLoaded.subscription) return;
+  singboxTabBusy = true;
+  try {
+    const ts = Date.now();
+    const [subRes, manualRes, historyRes, updatesRes] = await Promise.all([
+      fetch('/api/singbox/subscription?_=' + ts, { cache: 'no-store' }),
+      fetch('/api/singbox/manual-nodes?_=' + ts, { cache: 'no-store' }),
+      fetch('/api/singbox/subscription/history?_=' + ts, { cache: 'no-store' }),
+      fetch('/api/singbox/subscription/updates?_=' + ts, { cache: 'no-store' }),
+    ]);
+    const sub = await subRes.json();
+    const manual = await manualRes.json();
+    const history = await historyRes.json();
+    const updates = await updatesRes.json();
+    applyOverview({
+      subscription: sub || {},
+      manualNodesDraft: (manual && (manual.nodes || manual.manual_nodes_draft || manual.manualNodesDraft)) || '',
+      manualNodesLastResult: (manual && (manual.last_result || manual.lastResult || manual.manual_nodes_last_result)) || null,
+      history: (history && history.history) || [],
+      updateEvents: (updates && updates.events) || [],
+    });
+    sbTabLoaded.subscription = true;
+    return sub;
+  } finally {
+    singboxTabBusy = false;
+  }
+}
+
+async function refreshBackupTab(force = false) {
+  if (singboxTabBusy || document.hidden) return;
+  if (!force && sbTabLoaded.backup) return;
+  singboxTabBusy = true;
+  try {
+    const ts = Date.now();
+    const [backupsRes, statusRes] = await Promise.all([
+      fetch('/api/singbox/backups?_=' + ts, { cache: 'no-store' }),
+      fetch('/api/singbox/backups/status?_=' + ts, { cache: 'no-store' }),
+    ]);
+    const backups = await backupsRes.json();
+    const statusPayload = await statusRes.json();
+    applyOverview({
+      backups: Array.isArray(backups) ? backups : [],
+      backupStatus: (statusPayload && statusPayload.status) || null,
+    });
+    sbTabLoaded.backup = true;
+    return backups;
+  } finally {
+    singboxTabBusy = false;
+  }
+}
+
+async function refreshConfigTab(force = false) {
+  if (singboxTabBusy || document.hidden) return;
+  if (!force && sbTabLoaded.config) return;
+  singboxTabBusy = true;
+  try {
+    const ts = Date.now();
+    const [configRes, templateRes, metaRes] = await Promise.all([
+      fetch('/api/singbox/config?_=' + ts, { cache: 'no-store' }),
+      fetch('/api/singbox/template/config?_=' + ts, { cache: 'no-store' }),
+      fetch('/api/singbox/config/meta?_=' + ts, { cache: 'no-store' }),
+    ]);
+    const config = await configRes.json();
+    const template = await templateRes.json();
+    const meta = await metaRes.json();
+    applyOverview({
+      updatedAt: (meta && meta.updatedAt) || '',
+      configStatus: (meta && meta.configStatus) || null,
+      config: (config && config.config) || '',
+      templateConfig: (template && template.config) || '',
+    });
+    sbTabLoaded.config = true;
+    return config;
+  } finally {
+    singboxTabBusy = false;
+  }
+}
+
+function activeSingboxPollingMs() {
+  if (currentSbTab === 'overview') return 10000;
+  if (currentSbTab === 'upgrade') return 15000;
+  return 0;
+}
+
+async function refreshSingboxOverview(force = false) {
+  if (singboxOverviewBusy || document.hidden) return;
+  if (!force && currentSbTab !== 'overview') return;
+  singboxOverviewBusy = true;
+  try {
+    const r = await fetch('/api/singbox/overview?_=' + Date.now(), { cache: 'no-store' });
+    const j = await r.json();
+    applyOverview(j);
+    sbTabLoaded.overview = true;
+    return j;
+  } finally {
+    singboxOverviewBusy = false;
+  }
+}
+function startManagedPolling(fn, getMs){
   let timer=null;
-  const tick=()=>{ if(!document.hidden) fn(); };
-  const reset=()=>{ if(timer) clearInterval(timer); timer=setInterval(tick, ms); };
-  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fn(); });
+  const reset=()=>{
+    if(timer) clearInterval(timer);
+    const ms = typeof getMs === 'function' ? getMs() : getMs;
+    if(!(ms > 0)) { timer = null; return; }
+    timer=setInterval(()=>{ if(!document.hidden) fn(); }, ms);
+  };
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) { fn(); reset(); } });
+  window.addEventListener('focus', ()=> { fn(); reset(); });
   reset();
+  return { reset };
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -671,10 +841,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-startManagedPolling(function(){
-  if (isTemplateConfigProtected()) return;
-  refreshSingboxOverview();
-}, 5000);
-refreshIPForwardStatus(true);
+const singboxPolling = startManagedPolling(function(){
+  if (isTemplateConfigProtected() && currentSbTab === 'config') return;
+  refreshCurrentSingboxTab(false);
+}, activeSingboxPollingMs);
+refreshCurrentSingboxTab(true);
 </script>
 </main></div></body></html>

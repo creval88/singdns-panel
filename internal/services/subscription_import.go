@@ -50,24 +50,32 @@ func (s *SingBoxService) BuildConfigFromSubscription(_ string, content string) (
 	if isSingboxConfigJSON(trimmed) {
 		return trimmed, &ImportSummary{ParsedNodeCount: 0}, nil
 	}
-	if nodes, ok := parseSingboxOutboundsOnly(trimmed); ok {
-		baseText, err := s.readSubscriptionBaseConfig()
+
+	var nodes []map[string]any
+	if nodesFromJSON, ok := parseSingboxOutboundsOnly(trimmed); ok {
+		nodes = nodesFromJSON
+	} else {
+		parsedNodes, err := parseSubscriptionNodes(trimmed)
 		if err != nil {
 			return "", nil, err
 		}
-		merged, summary, err := s.mergeSubscriptionNodesIntoConfig(baseText, nodes)
-		if err != nil {
-			return "", nil, err
+		if len(parsedNodes) == 0 {
+			return "", nil, fmt.Errorf("no supported nodes parsed from subscription")
 		}
-		return merged, summary, nil
+		nodes = parsedNodes
 	}
 
-	nodes, err := parseSubscriptionNodes(trimmed)
+	manualRaw, err := s.ReadManualNodesDraft()
 	if err != nil {
 		return "", nil, err
 	}
-	if len(nodes) == 0 {
-		return "", nil, fmt.Errorf("no supported nodes parsed from subscription")
+	manualRaw = strings.TrimSpace(manualRaw)
+	if manualRaw != "" {
+		manualNodes, _, err := parseManualNodeLines(manualRaw)
+		if err != nil {
+			return "", nil, fmt.Errorf("parse manual nodes draft: %w", err)
+		}
+		nodes = append(nodes, manualNodes...)
 	}
 
 	baseText, err := s.readSubscriptionBaseConfig()
@@ -77,6 +85,9 @@ func (s *SingBoxService) BuildConfigFromSubscription(_ string, content string) (
 	merged, summary, err := s.mergeSubscriptionNodesIntoConfig(baseText, nodes)
 	if err != nil {
 		return "", nil, err
+	}
+	if summary != nil {
+		summary.ParsedNodeCount = len(nodes)
 	}
 	return merged, summary, nil
 }
@@ -905,6 +916,22 @@ func (s *SingBoxService) ImportSubscriptionsFromURLs(rawURLs []string) (*Operati
 		s.AppendSubscriptionUpdateEventDetailed("error", "import", "build", joinSubscriptionURLs(urls), err.Error(), time.Since(startedAt))
 		return nil, err
 	}
+	manualRaw, err := s.ReadManualNodesDraft()
+	if err != nil {
+		s.AppendSubscriptionUpdateEventDetailed("error", "import", "manual-draft", joinSubscriptionURLs(urls), err.Error(), time.Since(startedAt))
+		return nil, err
+	}
+	manualRaw = strings.TrimSpace(manualRaw)
+	manualParsed := 0
+	if manualRaw != "" {
+		manualNodes, _, err := parseManualNodeLines(manualRaw)
+		if err != nil {
+			s.AppendSubscriptionUpdateEventDetailed("error", "import", "manual-draft", joinSubscriptionURLs(urls), "手动草稿节点解析失败，已终止更新："+err.Error(), time.Since(startedAt))
+			return nil, err
+		}
+		allNodes = append(allNodes, manualNodes...)
+		manualParsed = len(manualNodes)
+	}
 	finalConfig, summary, err := s.mergeSubscriptionNodesIntoConfig(baseText, allNodes)
 	if err != nil {
 		s.AppendSubscriptionUpdateEventDetailed("error", "import", "build", joinSubscriptionURLs(urls), err.Error(), time.Since(startedAt))
@@ -924,7 +951,7 @@ func (s *SingBoxService) ImportSubscriptionsFromURLs(rawURLs []string) (*Operati
 	for g := range expandedSet {
 		expanded = append(expanded, g)
 	}
-	msg := fmt.Sprintf("节点模板导入完成：订阅 %d 条，成功 %d 条，忽略失败 %d 条，解析节点 %d 个，展开组 %d 个", len(urls), len(urls)-failedCount, failedCount, totalParsed, len(expanded))
+	msg := fmt.Sprintf("节点模板导入完成：订阅 %d 条，成功 %d 条，忽略失败 %d 条，订阅解析节点 %d 个，手动草稿节点 %d 个，最终合并节点 %d 个，展开组 %d 个", len(urls), len(urls)-failedCount, failedCount, totalParsed, manualParsed, len(allNodes), len(expanded))
 	s.AppendSubscriptionUpdateEventDetailed("ok", "import", "summary", joinSubscriptionURLs(urls), msg, time.Since(startedAt))
 	if res != nil {
 		res.Message = msg + "；" + res.Message

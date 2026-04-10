@@ -219,7 +219,7 @@ function startManagedPolling(fn, ms) {
   return timer;
 }
 refreshDashboard();
-startManagedPolling(refreshDashboard, 5000);
+startManagedPolling(refreshDashboard, 10000);
 
 function fmtBytes(n) {
   if (n == null || isNaN(n)) return '-';
@@ -230,35 +230,35 @@ function fmtBytes(n) {
 }
 function fmtSpeed(n) { return n != null ? fmtBytes(n) + '/s' : '-'; }
 
-async function pollDashTraffic() {
+let dashTrafficBusy = false;
+let dashConnectionsBusy = false;
+
+async function fetchDashTrafficSnapshot() {
+  if (dashTrafficBusy || document.hidden) return;
+  dashTrafficBusy = true;
   try {
-    const r = await fetch('/api/clash/traffic');
-    if (!r.ok || !r.body) return;
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, {stream: true});
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const j = JSON.parse(line);
-          const up = document.getElementById('dash-traffic-up');
-          const down = document.getElementById('dash-traffic-down');
-          if (up) up.textContent = fmtSpeed(j.up);
-          if (down) down.textContent = fmtSpeed(j.down);
-        } catch(_) {}
-      }
-    }
-  } catch(_) {}
+    const r = await fetch('/api/clash/connections', {cache:'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    const up = document.getElementById('dash-traffic-up');
+    const down = document.getElementById('dash-traffic-down');
+    const tu = document.getElementById('dash-traffic-total-up');
+    const td = document.getElementById('dash-traffic-total-down');
+    if (up) up.textContent = fmtSpeed(j.uploadSpeed || 0);
+    if (down) down.textContent = fmtSpeed(j.downloadSpeed || 0);
+    if (tu) tu.textContent = fmtBytes(j.uploadTotal);
+    if (td) td.textContent = fmtBytes(j.downloadTotal);
+  } catch(_) {
+  } finally {
+    dashTrafficBusy = false;
+  }
 }
+
 async function fetchDashConnections() {
+  if (dashConnectionsBusy || document.hidden) return;
+  dashConnectionsBusy = true;
   try {
-    const r = await fetch('/api/clash/connections');
+    const r = await fetch('/api/clash/connections', {cache:'no-store'});
     if (r.ok) {
       const j = await r.json();
       const tu = document.getElementById('dash-traffic-total-up');
@@ -266,9 +266,12 @@ async function fetchDashConnections() {
       if (tu) tu.textContent = fmtBytes(j.uploadTotal);
       if (td) td.textContent = fmtBytes(j.downloadTotal);
     }
-  } catch(_) {}
+  } catch(_) {
+  } finally {
+    dashConnectionsBusy = false;
+  }
 }
-pollDashTraffic();
-fetchDashConnections();
-setInterval(fetchDashConnections, 5000);
+
+fetchDashTrafficSnapshot();
+setInterval(fetchDashTrafficSnapshot, 10000);
 </script></main></div></body></html>

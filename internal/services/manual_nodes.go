@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,12 +30,20 @@ type ManualNodesImportResult struct {
 	Message     string                 `json:"message"`
 }
 
-func (s *SingBoxService) manualNodesPath() string {
+func (s *SingBoxService) manualNodesBaseDir() string {
 	baseDir := filepath.Dir(strings.TrimSpace(s.cfg.ConfigPath))
 	if baseDir == "" || baseDir == "." {
 		baseDir = "/etc/sing-box"
 	}
-	return filepath.Join(baseDir, "manual-nodes.txt")
+	return baseDir
+}
+
+func (s *SingBoxService) manualNodesPath() string {
+	return filepath.Join(s.manualNodesBaseDir(), "manual-nodes.txt")
+}
+
+func (s *SingBoxService) manualNodesLastResultPath() string {
+	return filepath.Join(s.manualNodesBaseDir(), "manual-nodes-last-import.json")
 }
 
 func (s *SingBoxService) ReadManualNodesDraft() (string, error) {
@@ -62,6 +71,32 @@ func (s *SingBoxService) SaveManualNodesDraft(raw string) (*OperationResult, err
 		msg = "手动节点草稿已清空"
 	}
 	return &OperationResult{Action: "manual_nodes.save", Message: msg}, nil
+}
+
+func (s *SingBoxService) ReadLastManualNodesImportResult() (*ManualNodesImportResult, error) {
+	b, err := os.ReadFile(s.manualNodesLastResultPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out ManualNodesImportResult
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *SingBoxService) SaveLastManualNodesImportResult(result *ManualNodesImportResult) error {
+	if result == nil {
+		return nil
+	}
+	b, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.writeManagedFile(s.manualNodesLastResultPath(), string(b)+"\n")
 }
 
 func parseManualNodeLines(raw string) ([]map[string]any, *ManualNodesImportResult, error) {
@@ -199,11 +234,13 @@ func (s *SingBoxService) ImportManualNodes(raw string) (*ManualNodesImportResult
 	}
 	manualNodes, result, err := parseManualNodeLines(raw)
 	if err != nil {
+		_ = s.SaveLastManualNodesImportResult(result)
 		return result, err
 	}
 
 	existingNodes, existingParsed, existingIgnored, err := s.loadExistingNodeSubscriptionNodes()
 	if err != nil {
+		_ = s.SaveLastManualNodesImportResult(result)
 		return result, err
 	}
 	mergedNodes := make([]map[string]any, 0, len(existingNodes)+len(manualNodes))
@@ -212,18 +249,22 @@ func (s *SingBoxService) ImportManualNodes(raw string) (*ManualNodesImportResult
 
 	baseText, err := s.readSubscriptionBaseConfig()
 	if err != nil {
+		_ = s.SaveLastManualNodesImportResult(result)
 		return result, err
 	}
 	finalConfig, summary, err := s.mergeSubscriptionNodesIntoConfig(baseText, mergedNodes)
 	if err != nil {
+		_ = s.SaveLastManualNodesImportResult(result)
 		return result, err
 	}
 	saveResult, err := s.SaveConfig(finalConfig)
 	if err != nil {
+		_ = s.SaveLastManualNodesImportResult(result)
 		return result, err
 	}
 	restartResult, err := s.Action("restart")
 	if err != nil {
+		_ = s.SaveLastManualNodesImportResult(result)
 		return result, err
 	}
 
@@ -238,6 +279,7 @@ func (s *SingBoxService) ImportManualNodes(raw string) (*ManualNodesImportResult
 	if restartResult != nil && strings.TrimSpace(restartResult.Message) != "" {
 		result.Message += "；" + strings.TrimSpace(restartResult.Message)
 	}
+	_ = s.SaveLastManualNodesImportResult(result)
 	return result, nil
 }
 

@@ -8,133 +8,255 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	cfgpkg "singdns-panel/internal/config"
 	svc "singdns-panel/internal/services"
 )
 
 func (a *App) SingBoxPage(w http.ResponseWriter, r *http.Request) {
-	overview := a.singboxOverview(r)
-	overview["Title"] = "Sing-box"
-	overview["ActiveNav"] = "singbox"
-	overview["PageTitle"] = "Sing-box 管理"
-	overview["Eyebrow"] = "Service"
-	overview["SidebarSubtitle"] = "sing-box / mosdns 控制台"
-	a.render(w, "singbox.html", overview)
+	page := a.singboxPageSkeleton(r)
+	page["Title"] = "Sing-box"
+	page["ActiveNav"] = "singbox"
+	page["PageTitle"] = "Sing-box 管理"
+	page["Eyebrow"] = "Service"
+	page["SidebarSubtitle"] = "sing-box / mosdns 控制台"
+	a.render(w, "singbox.html", page)
 }
 
-func (a *App) singboxOverview(r *http.Request) map[string]any {
-	status, _ := a.SingBox.Status()
-	if status == nil {
-		status = &svc.ServiceStatus{Name: "sing-box"}
-	}
-	config, _ := a.SingBox.ReadConfig()
-	templateConfig, _ := a.SingBox.ReadTemplateConfig()
-	url, _ := a.SingBox.ReadSubscriptionURL()
-	subscription, _ := a.SingBox.SubscriptionStatus()
-	if subscription == nil {
-		subscription = &svc.SubscriptionStatus{}
-	}
-	cron, _ := a.SingBox.CronShow()
-	if cron == nil {
-		cron = &svc.CronInfo{}
-	}
-	monitorCron, _ := a.Monitor.CronShow()
-	if monitorCron == nil {
-		monitorCron = &svc.CronInfo{}
-	}
-	monitorStatus, _ := a.Monitor.Status()
-	if monitorStatus == nil {
-		monitorStatus = &svc.MonitorStatus{}
-	}
-	monitorConfig := a.Config.Monitor
-	version, _ := a.SingBox.Version()
-	latestVersion, _ := a.SingBox.LatestVersion()
-	updatedAt, _ := a.SingBox.ConfigUpdatedAt()
-	backups, _ := a.SingBox.ListBackups()
-	if backups == nil {
-		backups = []svc.BackupInfo{}
-	}
-	backupStatus, _ := a.SingBox.BackupStatus()
-	if backupStatus == nil {
-		backupStatus = &svc.BackupStatus{}
-	}
-	history, _ := a.SingBox.SubscriptionHistory()
-	if history == nil {
-		history = []svc.SubscriptionHistoryItem{}
-	}
-	updateEvents, _ := a.SingBox.SubscriptionUpdateEvents(12)
-	if updateEvents == nil {
-		updateEvents = []svc.SubscriptionUpdateEvent{}
-	}
-	configStatus, _ := a.SingBox.ConfigStatus()
-	if configStatus == nil {
-		configStatus = &svc.ConfigStatus{}
-	}
+type singboxOverviewSnapshot struct {
+	status                *svc.ServiceStatus
+	config                string
+	templateConfig        string
+	url                   string
+	subscription          *svc.SubscriptionStatus
+	cron                  *svc.CronInfo
+	monitorCron           *svc.CronInfo
+	monitorStatus         *svc.MonitorStatus
+	monitorConfig         cfgpkg.MonitorConfig
+	version               string
+	latestVersion         string
+	updatedAt             string
+	backups               []svc.BackupInfo
+	backupStatus          *svc.BackupStatus
+	history               []svc.SubscriptionHistoryItem
+	updateEvents          []svc.SubscriptionUpdateEvent
+	configStatus          *svc.ConfigStatus
+	clashAPI              *svc.ClashAPIInfo
+	panelVersion          string
+	panelRelease          *svc.PanelReleaseInfo
+	manualNodesDraft      string
+	manualNodesLastResult *svc.ManualNodesImportResult
+	ipForwardStatus       *svc.IPForwardStatus
+	ipForwardError        string
+	ipForwardMessage      string
+}
+
+func (a *App) singboxPageSkeleton(r *http.Request) map[string]any {
+	status := &svc.ServiceStatus{Name: "sing-box"}
+	cron := &svc.CronInfo{}
+	monitorCron := &svc.CronInfo{}
+	monitorStatus := &svc.MonitorStatus{}
+	subscription := &svc.SubscriptionStatus{}
+	backupStatus := &svc.BackupStatus{}
+	configStatus := &svc.ConfigStatus{}
 	clashAPI, _ := a.SingBox.ClashAPIInfo(r.Host)
 	if clashAPI == nil {
 		clashAPI = &svc.ClashAPIInfo{}
 	}
-	panel, _ := a.Panel.LatestLocalRelease()
-	manualNodesDraft, _ := a.SingBox.ReadManualNodesDraft()
-	ipForwardStatus, ipForwardErr := a.SingBox.IPForwardStatus()
-	ipForwardMessage := "检测失败"
-	if ipForwardStatus != nil && strings.TrimSpace(ipForwardStatus.Message) != "" {
-		ipForwardMessage = ipForwardStatus.Message
-	}
-	if ipForwardErr != nil {
-		ipForwardMessage = ipForwardErr.Error()
-	}
 	return map[string]any{
-		"Status":           status,
-		"Config":           config,
-		"TemplateConfig":   templateConfig,
-		"URL":              url,
-		"Subscription":     subscription,
-		"Cron":             cron,
-		"MonitorCron":      monitorCron,
-		"MonitorStatus":    monitorStatus,
-		"MonitorConfig":    monitorConfig,
-		"Version":          version,
-		"LatestVersion":    latestVersion,
-		"UpdatedAt":        updatedAt,
-		"Backups":          backups,
-		"BackupStatus":     backupStatus,
-		"History":          history,
-		"UpdateEvents":     updateEvents,
-		"ConfigStatus":     configStatus,
-		"ClashAPI":         clashAPI,
-		"PanelVersion":     a.Panel.CurrentVersion(),
-		"PanelRelease":     panel,
-		"ManualNodesDraft": manualNodesDraft,
-		"IPForwardStatus":  ipForwardStatus,
-		"IPForwardError":   ipForwardErrString(ipForwardErr),
-		"IPForwardMessage": ipForwardMessage,
+		"Status":                status,
+		"Config":                "",
+		"TemplateConfig":        "",
+		"URL":                   "",
+		"Subscription":          subscription,
+		"Cron":                  cron,
+		"MonitorCron":           monitorCron,
+		"MonitorStatus":         monitorStatus,
+		"MonitorConfig":         a.Config.Monitor,
+		"Version":               "加载中...",
+		"LatestVersion":         "加载中...",
+		"UpdatedAt":             "",
+		"Backups":               []svc.BackupInfo{},
+		"BackupStatus":          backupStatus,
+		"History":               []svc.SubscriptionHistoryItem{},
+		"UpdateEvents":          []svc.SubscriptionUpdateEvent{},
+		"ConfigStatus":          configStatus,
+		"ClashAPI":              clashAPI,
+		"PanelVersion":          a.Panel.CurrentVersion(),
+		"PanelRelease":          nil,
+		"ManualNodesDraft":      "",
+		"ManualNodesLastResult": nil,
+		"IPForwardStatus":       nil,
+		"IPForwardError":        "",
+		"IPForwardMessage":      "加载中...",
+	}
+}
 
-		"status":           status,
-		"config":           config,
-		"templateConfig":   templateConfig,
-		"url":              url,
-		"subscription":     subscription,
-		"cron":             cron,
-		"monitorCron":      monitorCron,
-		"monitorStatus":    monitorStatus,
-		"monitorConfig":    monitorConfig,
-		"version":          version,
-		"latestVersion":    latestVersion,
-		"updatedAt":        updatedAt,
-		"backups":          backups,
-		"backupStatus":     backupStatus,
-		"history":          history,
-		"updateEvents":     updateEvents,
-		"configStatus":     configStatus,
-		"clashAPI":         clashAPI,
-		"panelVersion":     a.Panel.CurrentVersion(),
-		"panelRelease":     panel,
-		"manualNodesDraft": manualNodesDraft,
-		"ipForwardStatus":  ipForwardStatus,
-		"ipForwardError":   ipForwardErrString(ipForwardErr),
-		"ipForwardMessage": ipForwardMessage,
+func (a *App) collectSingboxOverview(r *http.Request) singboxOverviewSnapshot {
+	out := singboxOverviewSnapshot{
+		status:           &svc.ServiceStatus{Name: "sing-box"},
+		subscription:     &svc.SubscriptionStatus{},
+		cron:             &svc.CronInfo{},
+		monitorCron:      &svc.CronInfo{},
+		monitorStatus:    &svc.MonitorStatus{},
+		monitorConfig:    a.Config.Monitor,
+		backups:          []svc.BackupInfo{},
+		backupStatus:     &svc.BackupStatus{},
+		history:          []svc.SubscriptionHistoryItem{},
+		updateEvents:     []svc.SubscriptionUpdateEvent{},
+		configStatus:     &svc.ConfigStatus{},
+		clashAPI:         &svc.ClashAPIInfo{},
+		panelVersion:     a.Panel.CurrentVersion(),
+		ipForwardMessage: "检测失败",
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(16)
+
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.Status(); err == nil && v != nil {
+			out.status = v
+		}
+	}()
+	go func() { defer wg.Done(); out.config, _ = a.SingBox.ReadConfig() }()
+	go func() { defer wg.Done(); out.templateConfig, _ = a.SingBox.ReadTemplateConfig() }()
+	go func() { defer wg.Done(); out.url, _ = a.SingBox.ReadSubscriptionURL() }()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.SubscriptionStatus(); err == nil && v != nil {
+			out.subscription = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.CronShow(); err == nil && v != nil {
+			out.cron = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.Monitor.CronShow(); err == nil && v != nil {
+			out.monitorCron = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.Monitor.Status(); err == nil && v != nil {
+			out.monitorStatus = v
+		}
+	}()
+	go func() { defer wg.Done(); out.version, _ = a.SingBox.Version() }()
+	go func() { defer wg.Done(); out.latestVersion, _ = a.SingBox.LatestVersion() }()
+	go func() { defer wg.Done(); out.updatedAt, _ = a.SingBox.ConfigUpdatedAt() }()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.ListBackups(); err == nil && v != nil {
+			out.backups = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.BackupStatus(); err == nil && v != nil {
+			out.backupStatus = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.ConfigStatus(); err == nil && v != nil {
+			out.configStatus = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.ClashAPIInfo(r.Host); err == nil && v != nil {
+			out.clashAPI = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := a.SingBox.IPForwardStatus(); err == nil && v != nil {
+			out.ipForwardStatus = v
+			if strings.TrimSpace(v.Message) != "" {
+				out.ipForwardMessage = v.Message
+			}
+		} else if err != nil {
+			out.ipForwardError = ipForwardErrString(err)
+			out.ipForwardMessage = err.Error()
+		}
+	}()
+
+	out.panelRelease, _ = a.Panel.LatestLocalRelease()
+	out.manualNodesDraft, _ = a.SingBox.ReadManualNodesDraft()
+	out.manualNodesLastResult, _ = a.SingBox.ReadLastManualNodesImportResult()
+	out.history, _ = a.SingBox.SubscriptionHistory()
+	out.updateEvents, _ = a.SingBox.SubscriptionUpdateEvents(12)
+	if out.history == nil {
+		out.history = []svc.SubscriptionHistoryItem{}
+	}
+	if out.updateEvents == nil {
+		out.updateEvents = []svc.SubscriptionUpdateEvent{}
+	}
+
+	wg.Wait()
+	return out
+}
+
+func (a *App) singboxOverview(r *http.Request) map[string]any {
+	o := a.collectSingboxOverview(r)
+	return map[string]any{
+		"Status":                o.status,
+		"Config":                o.config,
+		"TemplateConfig":        o.templateConfig,
+		"URL":                   o.url,
+		"Subscription":          o.subscription,
+		"Cron":                  o.cron,
+		"MonitorCron":           o.monitorCron,
+		"MonitorStatus":         o.monitorStatus,
+		"MonitorConfig":         o.monitorConfig,
+		"Version":               o.version,
+		"LatestVersion":         o.latestVersion,
+		"UpdatedAt":             o.updatedAt,
+		"Backups":               o.backups,
+		"BackupStatus":          o.backupStatus,
+		"History":               o.history,
+		"UpdateEvents":          o.updateEvents,
+		"ConfigStatus":          o.configStatus,
+		"ClashAPI":              o.clashAPI,
+		"PanelVersion":          o.panelVersion,
+		"PanelRelease":          o.panelRelease,
+		"ManualNodesDraft":      o.manualNodesDraft,
+		"ManualNodesLastResult": o.manualNodesLastResult,
+		"IPForwardStatus":       o.ipForwardStatus,
+		"IPForwardError":        o.ipForwardError,
+		"IPForwardMessage":      o.ipForwardMessage,
+
+		"status":                o.status,
+		"config":                o.config,
+		"templateConfig":        o.templateConfig,
+		"url":                   o.url,
+		"subscription":          o.subscription,
+		"cron":                  o.cron,
+		"monitorCron":           o.monitorCron,
+		"monitorStatus":         o.monitorStatus,
+		"monitorConfig":         o.monitorConfig,
+		"version":               o.version,
+		"latestVersion":         o.latestVersion,
+		"updatedAt":             o.updatedAt,
+		"backups":               o.backups,
+		"backupStatus":          o.backupStatus,
+		"history":               o.history,
+		"updateEvents":          o.updateEvents,
+		"configStatus":          o.configStatus,
+		"clashAPI":              o.clashAPI,
+		"panelVersion":          o.panelVersion,
+		"panelRelease":          o.panelRelease,
+		"manualNodesDraft":      o.manualNodesDraft,
+		"manualNodesLastResult": o.manualNodesLastResult,
+		"ipForwardStatus":       o.ipForwardStatus,
+		"ipForwardError":        o.ipForwardError,
+		"ipForwardMessage":      o.ipForwardMessage,
 	}
 }
 
@@ -163,9 +285,21 @@ func (a *App) SingBoxTemplateConfigAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"config": mustStr(a.SingBox.ReadTemplateConfig())})
 }
 func (a *App) SingBoxSubscriptionAPI(w http.ResponseWriter, r *http.Request) {
-	fullURL, _ := a.SingBox.ReadFullConfigSubscriptionURL()
-	nodeURLs, _ := a.SingBox.ReadNodeSubscriptionURLs()
-	json.NewEncoder(w).Encode(map[string]any{"url": fullURL, "urls": nodeURLs, "full_config_url": fullURL, "node_urls": nodeURLs})
+	w.Header().Set("Content-Type", "application/json")
+	status, err := a.SingBox.SubscriptionStatus()
+	if err != nil {
+		fullURL, _ := a.SingBox.ReadFullConfigSubscriptionURL()
+		nodeURLs, _ := a.SingBox.ReadNodeSubscriptionURLs()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"url":             fullURL,
+			"urls":            nodeURLs,
+			"full_config_url": fullURL,
+			"node_urls":       nodeURLs,
+			"error":           err.Error(),
+		})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(status)
 }
 
 func (a *App) SingBoxActionAPI(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +443,8 @@ func (a *App) SingBoxManualNodesAPI(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "nodes": text})
+	lastResult, _ := a.SingBox.ReadLastManualNodesImportResult()
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "nodes": text, "last_result": lastResult})
 }
 
 func (a *App) SingBoxManualNodesSaveAPI(w http.ResponseWriter, r *http.Request) {
@@ -344,8 +479,63 @@ func (a *App) SingBoxManualNodesImportAPI(w http.ResponseWriter, r *http.Request
 	a.auditMessageFromRequest(r, "singbox.manual_nodes.import", msg)
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg, "result": res})
 }
+
+func (a *App) SingBoxSubscriptionHistoryAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	history, _ := a.SingBox.SubscriptionHistory()
+	if history == nil {
+		history = []svc.SubscriptionHistoryItem{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "history": history})
+}
+
+func (a *App) SingBoxSubscriptionUpdatesAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	events, _ := a.SingBox.SubscriptionUpdateEvents(12)
+	if events == nil {
+		events = []svc.SubscriptionUpdateEvent{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "events": events})
+}
+
+func (a *App) SingBoxConfigMetaAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	updatedAt, _ := a.SingBox.ConfigUpdatedAt()
+	configStatus, _ := a.SingBox.ConfigStatus()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":           true,
+		"updatedAt":    updatedAt,
+		"configStatus": configStatus,
+	})
+}
 func (a *App) SingBoxVersionAPI(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]string{"version": mustStr(a.SingBox.Version())})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"version": mustStr(a.SingBox.Version())})
+}
+
+func (a *App) SingBoxUpgradeOverviewAPI(w http.ResponseWriter, r *http.Request) {
+	version, _ := a.SingBox.Version()
+	latestVersion, _ := a.SingBox.LatestVersion()
+	panelRelease, _ := a.Panel.LatestLocalRelease()
+	ipForwardStatus, ipForwardErr := a.SingBox.IPForwardStatus()
+	ipForwardMessage := "检测失败"
+	if ipForwardStatus != nil && strings.TrimSpace(ipForwardStatus.Message) != "" {
+		ipForwardMessage = ipForwardStatus.Message
+	}
+	if ipForwardErr != nil {
+		ipForwardMessage = ipForwardErr.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":               true,
+		"version":          version,
+		"latestVersion":    latestVersion,
+		"panelVersion":     a.Panel.CurrentVersion(),
+		"panelRelease":     panelRelease,
+		"ipForwardStatus":  ipForwardStatus,
+		"ipForwardError":   ipForwardErrString(ipForwardErr),
+		"ipForwardMessage": ipForwardMessage,
+	})
 }
 func (a *App) SingBoxUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 	err := a.SingBox.Upgrade()
@@ -550,6 +740,12 @@ func (a *App) MonitorRunAPI(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) SingBoxBackupsAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(must(a.SingBox.ListBackups()))
+}
+
+func (a *App) SingBoxBackupStatusAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	status, _ := a.SingBox.BackupStatus()
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": status})
 }
 
 func (a *App) SingBoxCreateBackupAPI(w http.ResponseWriter, r *http.Request) {

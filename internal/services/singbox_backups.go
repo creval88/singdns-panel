@@ -13,6 +13,7 @@ import (
 func (s *SingBoxService) ListBackups() ([]BackupInfo, error) {
 	dir := filepath.Dir(s.cfg.ConfigPath)
 	base := filepath.Base(s.cfg.ConfigPath) + ".backup."
+	rollbackName := s.subscriptionRollbackFileName()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -21,7 +22,7 @@ func (s *SingBoxService) ListBackups() ([]BackupInfo, error) {
 	currentDigest := sha256.Sum256([]byte(currentConfig))
 	var out []BackupInfo
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), base) {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), base) || e.Name() == rollbackName {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
@@ -68,14 +69,16 @@ func (s *SingBoxService) RestoreBackup(name string) (*OperationResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.SaveConfig(string(b))
-	if err != nil {
+	if err := s.ValidateConfig(string(b)); err != nil {
 		return nil, err
 	}
-	msg := "已回滚配置"
-	if res != nil && res.Message != "" {
-		msg = "已回滚配置：" + res.Message
+	if _, err := s.CreateBackup(); err != nil {
+		return nil, err
 	}
+	if err := s.writeConfigFile(string(b)); err != nil {
+		return nil, err
+	}
+	msg := "已回滚配置并覆盖当前配置"
 	return &OperationResult{Action: "backup.restore", Message: msg}, nil
 }
 

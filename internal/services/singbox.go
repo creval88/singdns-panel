@@ -273,6 +273,24 @@ func (s *SingBoxService) SaveConfig(content string) (*OperationResult, error) {
 	return &OperationResult{Action: "config.save", Message: msg}, nil
 }
 
+func (s *SingBoxService) saveSubscriptionConfig(content string) (*OperationResult, error) {
+	if err := s.ValidateConfig(content); err != nil {
+		return nil, err
+	}
+	backupName, err := s.CreateSubscriptionRollbackBackup()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.writeConfigFile(content); err != nil {
+		return nil, err
+	}
+	msg := fmt.Sprintf("订阅配置已保存，写入 %d 字节", len(content))
+	if backupName != "" {
+		msg += "，已生成订阅回滚备份"
+	}
+	return &OperationResult{Action: "subscription.config.save", Message: msg}, nil
+}
+
 func (s *SingBoxService) ReadSubscriptionURLs() ([]string, error) {
 	return s.ReadNodeSubscriptionURLs()
 }
@@ -409,7 +427,7 @@ func (s *SingBoxService) ApplySubscriptionContent(rawURL, content string, starte
 		return nil, err
 	}
 	stageStartedAt := time.Now()
-	saveResult, err := s.SaveConfig(content)
+	saveResult, err := s.saveSubscriptionConfig(content)
 	if err != nil {
 		s.AppendSubscriptionUpdateEventDetailed("error", "update", "save", rawURL, err.Error(), time.Since(stageStartedAt))
 		return nil, err
@@ -420,6 +438,11 @@ func (s *SingBoxService) ApplySubscriptionContent(rawURL, content string, starte
 	restartResult, err := s.Action("restart")
 	if err != nil {
 		s.AppendSubscriptionUpdateEventDetailed("error", "update", "restart", rawURL, err.Error(), time.Since(stageStartedAt))
+		if rbErr := s.RestoreSubscriptionRollbackBackup(); rbErr == nil {
+			_, _ = s.Action("restart")
+			s.AppendSubscriptionUpdateEventDetailed("ok", "rollback", "subscription", rawURL, "订阅更新重启失败，已自动回滚到更新前配置", time.Since(stageStartedAt))
+			return nil, fmt.Errorf("订阅更新重启失败，已自动回滚到更新前配置: %w", err)
+		}
 		return nil, err
 	}
 	msg := fmt.Sprintf("订阅已更新，写入 %d 字节并重启服务", len(content))

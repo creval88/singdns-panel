@@ -288,8 +288,13 @@
           setBusy(false);
         }
       }
+      function getPanelRemoteUpgradeURLInput() {
+        return document.getElementById('singbox-remote-upgrade-url') || document.getElementById('remote-upgrade-url');
+      }
+
       async function upgradePanelRemote() {
-        const url = document.getElementById('remote-upgrade-url').value.trim();
+        const input = getPanelRemoteUpgradeURLInput();
+        const url = input ? input.value.trim() : '';
         if (!url) {
           const probe = await probePanelRemote(false);
           if (!probe || !probe.package_ok) {

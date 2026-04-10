@@ -179,8 +179,8 @@
   <div class="divider"></div>
   <div class="card-title-row"><h3>面板远程自更新</h3><span class="badge">Remote</span></div>
   <div style="margin-bottom: 12px">
-    <label class="field-label" for="remote-upgrade-url">直链下载地址 (支持 GitHub Release 的 .tar.gz 文件)</label>
-    <input id="remote-upgrade-url" placeholder="https://github.com/your/repo/releases/download/.../singdns-panel-linux-amd64.tar.gz" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
+    <label class="field-label" for="singbox-remote-upgrade-url">直链下载地址 (支持 GitHub Release 的 .tar.gz 文件)</label>
+    <input id="singbox-remote-upgrade-url" placeholder="https://github.com/your/repo/releases/download/.../singdns-panel-linux-amd64.tar.gz" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
   </div>
   <div class="actions">
     <button onclick="upgradeCore()">更新 Sing-box 核心</button>
@@ -195,7 +195,7 @@
   <div class="section-note">支持单文件或压缩包（.tar.gz / .tgz / .zip / .tar）。上传后会先备份当前内核，再自动校验并替换。</div>
   <div class="actions toolbar-slim" style="align-items:center; gap:8px; flex-wrap:wrap;">
     <input id="sb-core-upload-file" type="file" accept=".tar.gz,.tgz,.zip,.tar,.bin,.exe,*/*" style="flex:1; min-width:220px;">
-    <button onclick="uploadCoreFile()">上传并替换内核</button>
+    <button onclick="uploadCoreFile(this)">上传并替换内核</button>
   </div>
 
   <div class="divider"></div>
