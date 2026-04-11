@@ -173,6 +173,7 @@ func main() {
 		Templates:    tpls,
 		SingBox:      singboxSvc,
 		MosDNS:       services.NewMosDNSService(cfg.Services.MosDNS, systemd),
+		Network:      services.NewNetworkService(),
 		Monitor:      services.NewMonitorService(cfg.Monitor, singboxSvc),
 		Audit:        services.NewAuditService(cfg.AuditLog),
 		Panel:        services.NewPanelService(Version, cfg.PanelUpdate),
@@ -209,6 +210,12 @@ func main() {
 		pr.Get("/api/panel/upgrade/task", app.PanelUpgradeTaskAPI)
 		pr.Post("/api/panel/upgrade", app.PanelUpgradeAPI)
 		pr.Post("/api/panel/upgrade/remote", app.PanelRemoteUpgradeAPI)
+		pr.Get("/api/system/install/status", app.SystemInstallStatusAPI)
+		pr.Post("/api/system/install/singbox", app.SystemInstallSingBoxAPI)
+		pr.Post("/api/system/install/mosdns", app.SystemInstallMosDNSAPI)
+		pr.Post("/api/system/ip-forward/enable", app.SystemEnableIPForwardAPI)
+		pr.Get("/api/system/network", app.SystemNetworkStatusAPI)
+		pr.Post("/api/system/network", app.SystemNetworkSaveAPI)
 		pr.Post("/api/auth/password", app.ChangePasswordAPI)
 		pr.Get("/api/singbox/overview", app.SingBoxOverviewAPI)
 		pr.Get("/api/singbox/status", app.SingBoxStatusAPI)

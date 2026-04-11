@@ -66,6 +66,65 @@
       
       <div class="stacked-sections">
         <section class="card">
+          <div class="card-title-row"><h3>组件安装</h3><span class="badge">Install</span></div>
+          <div class="status-list kv-list">
+            <div><b>Sing-box</b><span id="install-singbox-status">{{if .InstallStatus.SingBox.Installed}}已安装{{else}}未安装{{end}}{{if .InstallStatus.SingBox.Version}} · {{.InstallStatus.SingBox.Version}}{{end}}</span></div>
+            <div><b>MosDNS</b><span id="install-mosdns-status">{{if .InstallStatus.MosDNS.Installed}}已安装{{else}}未安装{{end}}{{if .InstallStatus.MosDNS.Version}} · {{.InstallStatus.MosDNS.Version}}{{end}}</span></div>
+            <div><b>IP 转发</b><span id="install-ipforward-status">{{if .InstallStatus.IPForward}}{{.InstallStatus.IPForward.Message}}{{else}}未知{{end}}</span></div>
+          </div>
+          <div class="divider"></div>
+          <div class="section-note" id="install-note">Sing-box 按官方 install.sh 安装；MosDNS 按内置参考逻辑安装，不依赖外部临时脚本地址。</div>
+          <div class="actions" style="margin-top:10px; flex-wrap:wrap;">
+            <button onclick="installSingbox()">安装 / 更新 Sing-box</button>
+            <button class="ghost" onclick="enableIPForward()">开启 IP 转发</button>
+            <button onclick="installMosdns()">安装 / 更新 MosDNS</button>
+            <button class="ghost" onclick="refreshInstallStatus()">刷新状态</button>
+          </div>
+          <div class="section-note" style="margin-top:8px;">MosDNS 安装会处理依赖、53 端口占用、下载 release、写入 systemd unit，并启动服务。</div>
+        </section>
+
+        <section class="card">
+          <div class="card-title-row"><h3>网络设置</h3><span class="badge">Network</span></div>
+          <div class="status-list kv-list">
+            <div><b>当前网卡</b><span id="network-iface">{{if .NetworkStatus}}{{.NetworkStatus.Interface}}{{else}}-{{end}}</span></div>
+            <div><b>当前模式</b><span id="network-mode">{{if .NetworkStatus}}{{.NetworkStatus.Mode}}{{else}}-{{end}}</span></div>
+            <div><b>当前 IP</b><span id="network-address">{{if .NetworkStatus}}{{if .NetworkStatus.Address}}{{.NetworkStatus.Address}}{{if .NetworkStatus.Prefix}}/{{.NetworkStatus.Prefix}}{{end}}{{else}}-{{end}}{{else}}-{{end}}</span></div>
+            <div><b>当前生效 DNS</b><span id="network-runtime-dns">{{if .NetworkStatus}}{{if .NetworkStatus.RuntimeDNSText}}{{.NetworkStatus.RuntimeDNSText}}{{else}}-{{end}}{{else}}-{{end}}</span></div>
+            <div><b>配置 DNS</b><span id="network-config-dns">{{if .NetworkStatus}}{{if .NetworkStatus.ConfigDNSText}}{{.NetworkStatus.ConfigDNSText}}{{else}}-{{end}}{{else}}-{{end}}</span></div>
+            <div><b>配置后端</b><span id="network-backend">{{if .NetworkStatus}}{{if .NetworkStatus.Backend}}{{.NetworkStatus.Backend}}{{else}}-{{end}}{{else}}-{{end}}</span></div>
+            <div><b>Last-good</b><span id="network-last-good">{{if .NetworkStatus}}{{if .NetworkStatus.LastGoodPath}}{{.NetworkStatus.LastGoodPath}}{{else}}-{{end}}{{else}}-{{end}}</span></div>
+          </div>
+          <div class="divider"></div>
+          <div style="margin-bottom: 10px;">
+            <label class="field-label" for="net-interface">网卡</label>
+            <input id="net-interface" value="{{if .NetworkStatus}}{{.NetworkStatus.Interface}}{{end}}" placeholder="如 eth0" style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;">
+          </div>
+          <div class="status-list kv-list" style="margin-bottom:10px;">
+            <div><b>地址模式</b><span>
+              <select id="net-mode" style="min-width:160px; padding:6px 8px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;">
+                <option value="dhcp">DHCP</option>
+                <option value="static">静态 IP</option>
+                <option value="dns-only">仅修改 DNS</option>
+              </select>
+            </span></div>
+          </div>
+          <div class="status-list kv-list" style="margin-bottom:10px;">
+            <div><b>静态 IP</b><span><input id="net-address-input" placeholder="如 192.168.1.10" style="min-width:220px; padding:6px 8px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;"></span></div>
+            <div><b>前缀</b><span><input id="net-prefix-input" type="number" min="1" max="32" placeholder="24" style="width:90px; padding:6px 8px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;"></span></div>
+            <div><b>网关</b><span><input id="net-gateway-input" placeholder="如 192.168.1.1" style="min-width:220px; padding:6px 8px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;"></span></div>
+          </div>
+          <div style="margin-bottom: 10px;">
+            <label class="field-label" for="net-dns-input">系统 DNS（逗号分隔）</label>
+            <input id="net-dns-input" value="{{if .NetworkStatus}}{{if .NetworkStatus.RuntimeDNSText}}{{.NetworkStatus.RuntimeDNSText}}{{else}}{{.NetworkStatus.ConfigDNSText}}{{end}}{{end}}" placeholder="如 223.5.5.5, 1.1.1.1" style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;">
+          </div>
+          <div class="actions">
+            <button onclick="saveNetworkSettings()">保存网络设置</button>
+            <button class="ghost" onclick="refreshNetworkStatus()">刷新网络状态</button>
+          </div>
+          <div class="section-note" id="network-note">支持设置系统 DNS；netplan / ifupdown 环境可切换 DHCP / 静态 IPv4。注意：应用网络参数可能导致当前连接瞬断，远程机器请谨慎操作。</div>
+        </section>
+
+        <section class="card">
           <div class="card-title-row"><h3>修改登录密码</h3><span class="badge">Security</span></div>
           <div class="status-list kv-list">
             <div><b>登录账号</b><span>当前已登录</span></div>
@@ -266,6 +325,8 @@
       loadPanelUpdateConfig();
       checkPanelRelease();
       probePanelRemote(true);
+      refreshInstallStatus();
+      refreshNetworkStatus();
 
       async function upgradePanel() {
         if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
@@ -333,6 +394,128 @@
         if (!done) {
           toast('升级任务仍在处理中，请稍后手动刷新页面', true);
           setBusy(false);
+        }
+      }
+
+      async function refreshInstallStatus() {
+        try {
+          const r = await fetch('/api/system/install/status', {cache:'no-store'});
+          const j = await r.json();
+          if (!j.ok || !j.status) return;
+          const s = j.status || {};
+          const sb = s.singbox || {};
+          const md = s.mosdns || {};
+          const ipf = s.ip_forward || {};
+          document.getElementById('install-singbox-status').textContent = (sb.installed ? '已安装' : '未安装') + (sb.version ? (' · ' + sb.version) : '');
+          document.getElementById('install-mosdns-status').textContent = (md.installed ? '已安装' : '未安装') + (md.version ? (' · ' + md.version) : '');
+          document.getElementById('install-ipforward-status').textContent = ipf.message || '未知';
+          const parts = [];
+          if (sb.detail) parts.push('Sing-box: ' + sb.detail);
+          if (md.detail) parts.push('MosDNS: ' + md.detail);
+          if (ipf.message) parts.push('IP 转发: ' + ipf.message);
+          const note = document.getElementById('install-note');
+          if (note) note.textContent = parts.join(' · ') || '安装状态已刷新';
+        } catch (e) {
+          console.log('refreshInstallStatus failed', e);
+        }
+      }
+
+      async function installSingbox() {
+        if (!confirm('将按 sing-box 官网 install.sh 安装/更新，并自动启用服务与 IP 转发。确认继续？')) return;
+        const j = await request('/api/system/install/singbox', {
+          method:'POST',
+          body: JSON.stringify({ enable_ip_forward: true }),
+          busyText:'正在安装 Sing-box，可能需要几分钟...'
+        });
+        if (j && j.ok) await refreshInstallStatus();
+      }
+
+      async function installMosdns() {
+        if (!confirm('将按内置参考逻辑安装/更新 MosDNS。该过程可能修改 53 端口占用与 systemd-resolved。确认继续？')) return;
+        const j = await request('/api/system/install/mosdns', {
+          method:'POST',
+          body: JSON.stringify({}),
+          busyText:'正在安装 MosDNS，可能需要几分钟...'
+        });
+        if (j && j.ok) await refreshInstallStatus();
+      }
+
+      async function enableIPForward() {
+        const j = await request('/api/system/ip-forward/enable', {
+          method:'POST',
+          body: JSON.stringify({}),
+          busyText:'正在开启 IP 转发...'
+        });
+        if (j && j.ok) await refreshInstallStatus();
+      }
+
+      async function refreshNetworkStatus() {
+        try {
+          const r = await fetch('/api/system/network', {cache:'no-store'});
+          const j = await r.json();
+          if (!j.ok || !j.status) return;
+          const s = j.status || {};
+          document.getElementById('network-iface').textContent = s.interface || '-';
+          document.getElementById('network-mode').textContent = s.mode || '-';
+          document.getElementById('network-address').textContent = s.address ? (s.address + (s.prefix ? ('/' + s.prefix) : '')) : '-';
+          document.getElementById('network-runtime-dns').textContent = s.runtime_dns_text || s.dns_text || '-';
+          document.getElementById('network-config-dns').textContent = s.config_dns_text || '-';
+          document.getElementById('network-backend').textContent = s.backend || '-';
+          document.getElementById('network-last-good').textContent = s.last_good_path || '-';
+          document.getElementById('net-interface').value = s.interface || '';
+          document.getElementById('net-mode').value = s.mode || 'dhcp';
+          document.getElementById('net-address-input').value = s.address || '';
+          document.getElementById('net-prefix-input').value = s.prefix || '';
+          document.getElementById('net-gateway-input').value = s.gateway || '';
+          document.getElementById('net-dns-input').value = s.runtime_dns_text || s.config_dns_text || s.dns_text || '';
+          const note = document.getElementById('network-note');
+          if (note) note.textContent = s.summary || '网络状态已刷新';
+        } catch (e) {
+          console.log('refreshNetworkStatus failed', e);
+        }
+      }
+
+      async function saveNetworkSettings() {
+        const mode = document.getElementById('net-mode').value;
+        const payload = {
+          interface: document.getElementById('net-interface').value.trim(),
+          mode,
+          address: document.getElementById('net-address-input').value.trim(),
+          prefix: Number(document.getElementById('net-prefix-input').value || 0),
+          gateway: document.getElementById('net-gateway-input').value.trim(),
+          dns: [document.getElementById('net-dns-input').value.trim()]
+        };
+        const iface = document.getElementById('network-iface').textContent.trim();
+        const currentMode = document.getElementById('network-mode').textContent.trim();
+        const currentAddr = document.getElementById('network-address').textContent.trim();
+        const currentDns = document.getElementById('network-runtime-dns').textContent.trim();
+        const currentBackend = document.getElementById('network-backend').textContent.trim();
+        const nextAddr = payload.address ? (payload.address + (payload.prefix ? ('/' + payload.prefix) : '')) : '-';
+        const nextDns = payload.dns[0] || '-';
+        const highRisk = mode === 'static' || payload.interface !== iface || (mode !== currentMode) || (mode === 'dhcp' && payload.interface === iface && currentMode !== 'dhcp');
+        const tips = {
+          dhcp: '将应用 DHCP 配置；远程机器执行后可能瞬断，若现场网络服务行为异常可能导致失联。确认继续？',
+          static: '将写入静态 IP；若 IP/前缀/网关有误，可能直接导致你失联。确认继续？',
+          'dns-only': '将只修改系统 DNS。确认继续？'
+        };
+        let tip = tips[mode] || '确认保存网络设置？';
+        if (highRisk) {
+          tip = [
+            '这是高风险网络变更，请再次确认：',
+            '后端: ' + (currentBackend || '-'),
+            '当前: iface=' + (iface || '-') + ' mode=' + (currentMode || '-') + ' ip=' + (currentAddr || '-') + ' dns=' + (currentDns || '-'),
+            '目标: iface=' + (payload.interface || '-') + ' mode=' + (mode || '-') + ' ip=' + nextAddr + ' dns=' + nextDns,
+            '若目标参数错误，你可能会立刻失联。'
+          ].join('\n');
+        }
+        if (!confirm(tip)) return;
+        const j = await request('/api/system/network', {
+          method:'POST',
+          body: JSON.stringify(payload),
+          busyText:'正在应用网络设置，可能会短暂断开...'
+        });
+        if (j && j.ok) {
+          await refreshNetworkStatus();
         }
       }
 

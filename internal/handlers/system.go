@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	cfgpkg "singdns-panel/internal/config"
+	"singdns-panel/internal/services"
 )
 
 func normalizeArch(a string) string {
@@ -131,6 +132,8 @@ func (a *App) PanelUpdateConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) SystemPage(w http.ResponseWriter, r *http.Request) {
 	panel, _ := a.Panel.LatestLocalRelease()
+	installStatus := services.CollectSystemInstallStatus(a.SingBox, a.MosDNS)
+	networkStatus, _ := a.Network.Status()
 	a.render(w, "system.html", map[string]any{
 		"Title":           "System Settings",
 		"ActiveNav":       "system",
@@ -141,5 +144,66 @@ func (a *App) SystemPage(w http.ResponseWriter, r *http.Request) {
 		"PanelRelease":    panel,
 		"Arch":            "linux/" + normalizeArch(runtime.GOARCH),
 		"Listen":          a.Config.Listen,
+		"InstallStatus":   installStatus,
+		"NetworkStatus":   networkStatus,
 	})
+}
+
+func (a *App) SystemInstallStatusAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":     true,
+		"status": services.CollectSystemInstallStatus(a.SingBox, a.MosDNS),
+	})
+}
+
+func (a *App) SystemInstallSingBoxAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		EnableIPForward bool `json:"enable_ip_forward"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if !in.EnableIPForward {
+		in.EnableIPForward = true
+	}
+	res, err := a.SingBox.InstallOfficial(in.EnableIPForward)
+	a.respondAudited(w, r, "system.install.singbox", res, err, "Sing-box 安装成功")
+}
+
+func (a *App) SystemInstallMosDNSAPI(w http.ResponseWriter, r *http.Request) {
+	res, err := a.MosDNS.InstallFromReference()
+	a.respondAudited(w, r, "system.install.mosdns", res, err, "MosDNS 安装成功")
+}
+
+func (a *App) SystemEnableIPForwardAPI(w http.ResponseWriter, r *http.Request) {
+	err := a.SingBox.EnableIPForward()
+	if err != nil {
+		a.auditFromRequest(r, "system.ip_forward.enable", err)
+		respondMessage(w, err, "")
+		return
+	}
+	a.auditMessageFromRequest(r, "system.ip_forward.enable", "已开启 IP 转发")
+	respondMessage(w, nil, "已开启 IP 转发")
+}
+
+func (a *App) SystemNetworkStatusAPI(w http.ResponseWriter, r *http.Request) {
+	st, err := a.Network.Status()
+	if err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":     true,
+		"status": st,
+	})
+}
+
+func (a *App) SystemNetworkSaveAPI(w http.ResponseWriter, r *http.Request) {
+	var in services.NetworkSettingsInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	res, err := a.Network.Apply(in)
+	a.respondAudited(w, r, "system.network.apply", res, err, "网络配置已保存")
 }
