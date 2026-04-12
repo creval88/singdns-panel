@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 )
@@ -114,6 +115,14 @@ func (s *SingBoxService) ValidateConfigCenterContent(content string) (*ConfigCen
 		return &ConfigCenterValidation{OK: false, Errors: []string{err.Error()}, CanApply: false}, nil
 	}
 	result := ValidateConfigCenterDraft(draft)
+	// 如果 sing-box 二进制不存在，则提示引导去系统页安装，避免硬错误
+	if st, err := os.Stat(strings.TrimSpace(s.cfg.BinPath)); err != nil || st.IsDir() {
+		msg := fmt.Sprintf("未检测到 sing-box 可执行文件：%s；请先到“系统设置”安装后再校验/保存", strings.TrimSpace(s.cfg.BinPath))
+		result.Errors = append(result.Errors, msg)
+		result.OK = false
+		result.CanApply = false
+		return result, nil
+	}
 	if err := s.ValidateConfig(content); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 		result.OK = false
