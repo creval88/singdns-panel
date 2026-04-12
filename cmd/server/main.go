@@ -155,7 +155,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	tpls, err := template.ParseFS(tplFS, "*.html")
+	tpls, err := template.New("").Funcs(template.FuncMap{
+		"toJSON": func(v any) template.JS {
+			b, _ := json.Marshal(v)
+			if len(b) == 0 {
+				return template.JS("null")
+			}
+			return template.JS(b)
+		},
+	}).ParseFS(tplFS, "*.html")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -196,6 +204,7 @@ func main() {
 		pr.Use(app.CSRFMiddleware)
 		pr.Get("/", app.Dashboard)
 		pr.Get("/singbox", app.SingBoxPage)
+		pr.Get("/config-center", app.ConfigCenterPage)
 		pr.Get("/mosdns", app.MosDNSPage)
 		pr.Get("/logs", app.LogsPage)
 		pr.Get("/audit", app.AuditPage)
@@ -213,11 +222,17 @@ func main() {
 		pr.Get("/api/system/install/status", app.SystemInstallStatusAPI)
 		pr.Post("/api/system/install/singbox", app.SystemInstallSingBoxAPI)
 		pr.Post("/api/system/install/mosdns", app.SystemInstallMosDNSAPI)
+		pr.Post("/api/system/install/mosdns/upload", app.SystemInstallMosDNSUploadAPI)
+		pr.Post("/api/system/install/singbox/upload", app.SystemInstallSingBoxUploadAPI)
 		pr.Post("/api/system/ip-forward/enable", app.SystemEnableIPForwardAPI)
 		pr.Get("/api/system/network", app.SystemNetworkStatusAPI)
 		pr.Post("/api/system/network", app.SystemNetworkSaveAPI)
 		pr.Post("/api/auth/password", app.ChangePasswordAPI)
 		pr.Get("/api/singbox/overview", app.SingBoxOverviewAPI)
+		pr.Get("/api/singbox/config-center/overview", app.ConfigCenterOverviewAPI)
+		pr.Get("/api/singbox/config-center/draft", app.ConfigCenterDraftAPI)
+		pr.Post("/api/singbox/config-center/validate", app.ConfigCenterValidateAPI)
+		pr.Post("/api/singbox/config-center/save", app.ConfigCenterSaveAPI)
 		pr.Get("/api/singbox/status", app.SingBoxStatusAPI)
 		pr.Get("/api/singbox/config", app.SingBoxConfigAPI)
 		pr.Get("/api/singbox/config/meta", app.SingBoxConfigMetaAPI)

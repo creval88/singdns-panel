@@ -1,0 +1,259 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="layout">{{template "sidebar" .}}<main class="content">{{template "page_header" .}}
+
+<div class="actions toolbar-slim">
+  <button type="button" onclick="configCenterReloadDraft()">从当前配置加载</button>
+  <button type="button" class="ghost" onclick="configCenterValidateDraft()">校验草稿</button>
+  <button type="button" onclick="configCenterSaveDraft()">保存到 sing-box 配置</button>
+</div>
+
+<div class="stats-grid">
+  <section class="stat-card stat-card-uniform">
+    <div class="stat-label">Outbounds</div>
+    <div id="cc-stat-outbounds" class="stat-value">{{if .Overview}}{{.Overview.Counts.Outbounds}}{{else}}0{{end}}</div>
+    <div class="stat-sub muted">结构化提取到的出口对象</div>
+  </section>
+  <section class="stat-card stat-card-uniform">
+    <div class="stat-label">Rule Sets</div>
+    <div id="cc-stat-rulesets" class="stat-value">{{if .Overview}}{{.Overview.Counts.RuleSets}}{{else}}0{{end}}</div>
+    <div class="stat-sub muted">route.rule_set 中的规则集</div>
+  </section>
+  <section class="stat-card stat-card-uniform">
+    <div class="stat-label">Route Rules</div>
+    <div id="cc-stat-routes" class="stat-value">{{if .Overview}}{{.Overview.Counts.RouteRules}}{{else}}0{{end}}</div>
+    <div class="stat-sub muted">当前路由规则条目</div>
+  </section>
+  <section class="stat-card stat-card-uniform {{if not .Validation.CanApply}}alert{{end}}">
+    <div class="stat-label">Validation</div>
+    <div id="cc-stat-apply" class="stat-value">{{if .Validation.CanApply}}可应用{{else}}需修复{{end}}</div>
+    <div id="cc-stat-validation" class="stat-sub {{if .Validation.CanApply}}ok{{else}}bad{{end}}">{{len .Validation.Errors}} errors / {{len .Validation.Warnings}} warnings</div>
+  </section>
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <div class="card-title-row"><h3>概览</h3><span class="badge">Editable v2</span></div>
+    <div class="status-list kv-list">
+      <div><b>更新时间</b><span>{{if .Overview}}{{or .Overview.UpdatedAt "未知"}}{{else}}未知{{end}}</span></div>
+      <div><b>配置大小</b><span>{{if .Overview}}{{.Overview.ConfigBytes}}{{else}}0{{end}} bytes</span></div>
+      <div><b>保存策略</b><span>只替换 outbounds / route.rule_set / route.rules，其余字段保持原样</span></div>
+    </div>
+    <div class="divider"></div>
+    <div class="section-note">现在这版已经支持对象化编辑。底层仍保留 JSON 同步层，方便调试和兜底。</div>
+  </section>
+
+  <section class="card">
+    <div class="card-title-row"><h3>校验结果</h3><span class="badge">Validate</span></div>
+    <div id="config-center-validation" class="status-list">
+      {{if .Validation.Errors}}
+        {{range .Validation.Errors}}<div class="bad">• {{.}}</div>{{end}}
+      {{else}}<div class="ok">• 未发现结构化引用错误</div>{{end}}
+      {{if .Validation.Warnings}}
+        <div class="divider"></div>
+        {{range .Validation.Warnings}}<div class="warn-text">• {{.}}</div>{{end}}
+      {{end}}
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-title-row"><h3>Rule Sets</h3><div class="actions toolbar-slim"><button type="button" onclick="ccAddRuleSet()">新增 Rule Set</button></div></div>
+  <div id="cc-rulesets-list" class="object-list"></div>
+</section>
+
+<section class="card">
+  <div class="card-title-row"><h3>Outbounds</h3><div class="actions toolbar-slim"><button type="button" onclick="ccAddOutbound()">新增 Outbound</button></div></div>
+  <div id="cc-outbounds-list" class="object-list"></div>
+</section>
+
+<section class="card">
+  <div class="card-title-row"><h3>Route Rules</h3><div class="actions toolbar-slim"><button type="button" onclick="ccAddRouteRule()">新增 Route Rule</button></div></div>
+  <div id="cc-routes-list" class="object-list"></div>
+</section>
+
+<details class="card">
+  <summary><b>Raw JSON 逃生口</b> <span class="muted">需要时可直接改底层 JSON</span></summary>
+  <div class="grid two" style="margin-top:16px">
+    <section>
+      <div class="card-title-row"><h3>Rule Sets JSON</h3><span class="badge" id="cc-badge-rulesets">{{if .Draft}}{{len .Draft.RuleSets}}{{else}}0{{end}}</span></div>
+      <textarea id="cc-rulesets" class="editor cc-json-editor"></textarea>
+    </section>
+    <section>
+      <div class="card-title-row"><h3>Outbounds JSON</h3><span class="badge" id="cc-badge-outbounds">{{if .Draft}}{{len .Draft.Outbounds}}{{else}}0{{end}}</span></div>
+      <textarea id="cc-outbounds" class="editor cc-json-editor"></textarea>
+    </section>
+  </div>
+  <section style="margin-top:16px">
+    <div class="card-title-row"><h3>Route Rules JSON</h3><span class="badge" id="cc-badge-routes">{{if .Draft}}{{len .Draft.RouteRules}}{{else}}0{{end}}</span></div>
+    <textarea id="cc-routes" class="editor cc-json-editor"></textarea>
+  </section>
+</details>
+
+<script src="/static/app.js"></script>
+<script>
+const ccInitialDraft = {{.Draft | toJSON}};
+let ccState = {draft: ccInitialDraft || {version:1, source:'config', rule_sets:[], outbounds:[], route_rules:[]}};
+
+function pretty(v){ return JSON.stringify(v || [], null, 2); }
+function setText(id, value){ const el = document.getElementById(id); if(el) el.value = pretty(value); }
+function setCount(id, value){ const el = document.getElementById(id); if(el) el.textContent = String(value ?? 0); }
+function splitList(v){ return String(v || '').split(',').map(x=>x.trim()).filter(Boolean); }
+function joinList(v){ return Array.isArray(v) ? v.join(', ') : ''; }
+function esc(v){ return escapeHTML(v ?? ''); }
+
+function normalizeDraft(draft){
+  return {
+    version: draft?.version || 1,
+    source: draft?.source || 'config',
+    rule_sets: Array.isArray(draft?.rule_sets) ? draft.rule_sets : [],
+    outbounds: Array.isArray(draft?.outbounds) ? draft.outbounds : [],
+    route_rules: Array.isArray(draft?.route_rules) ? draft.route_rules : []
+  };
+}
+
+function syncTextareasFromState(){
+  setText('cc-rulesets', ccState.draft.rule_sets);
+  setText('cc-outbounds', ccState.draft.outbounds);
+  setText('cc-routes', ccState.draft.route_rules);
+  setCount('cc-badge-rulesets', ccState.draft.rule_sets.length);
+  setCount('cc-badge-outbounds', ccState.draft.outbounds.length);
+  setCount('cc-badge-routes', ccState.draft.route_rules.length);
+  setCount('cc-stat-rulesets', ccState.draft.rule_sets.length);
+  setCount('cc-stat-outbounds', ccState.draft.outbounds.length);
+  setCount('cc-stat-routes', ccState.draft.route_rules.length);
+}
+
+function syncStateFromTextareas(){
+  ccState.draft.rule_sets = JSON.parse(document.getElementById('cc-rulesets').value || '[]');
+  ccState.draft.outbounds = JSON.parse(document.getElementById('cc-outbounds').value || '[]');
+  ccState.draft.route_rules = JSON.parse(document.getElementById('cc-routes').value || '[]');
+}
+
+function renderRuleSets(){
+  const box = document.getElementById('cc-rulesets-list');
+  const items = ccState.draft.rule_sets || [];
+  if(!items.length){ box.innerHTML = '<div class="empty-text">暂无 rule_set，点上方按钮可新增。</div>'; return; }
+  box.innerHTML = items.map((item, i)=>`
+    <div class="object-card">
+      <div class="card-title-row"><h3>#${i+1} ${esc(item.tag || '未命名 Rule Set')}</h3><div class="actions toolbar-slim"><button type="button" class="ghost" onclick="ccRemoveRuleSet(${i})">删除</button></div></div>
+      <div class="object-grid two-col">
+        <label><span class="field-label">Tag</span><input value="${esc(item.tag)}" oninput="ccUpdateRuleSet(${i}, 'tag', this.value)"></label>
+        <label><span class="field-label">Type</span><input value="${esc(item.type)}" oninput="ccUpdateRuleSet(${i}, 'type', this.value)"></label>
+        <label><span class="field-label">Format</span><input value="${esc(item.format)}" oninput="ccUpdateRuleSet(${i}, 'format', this.value)"></label>
+        <label><span class="field-label">Source(url/path)</span><input value="${esc(item.source || item.url || item.path)}" oninput="ccUpdateRuleSet(${i}, 'source', this.value)"></label>
+      </div>
+      <div class="muted">引用 ${Number(item.reference_count || 0)}</div>
+    </div>
+  `).join('');
+}
+
+function renderOutbounds(){
+  const box = document.getElementById('cc-outbounds-list');
+  const items = ccState.draft.outbounds || [];
+  if(!items.length){ box.innerHTML = '<div class="empty-text">暂无 outbound，点上方按钮可新增。</div>'; return; }
+  box.innerHTML = items.map((item, i)=>`
+    <div class="object-card">
+      <div class="card-title-row"><h3>#${i+1} ${esc(item.tag || '未命名 Outbound')}</h3><div class="actions toolbar-slim"><button type="button" class="ghost" onclick="ccRemoveOutbound(${i})">删除</button></div></div>
+      <div class="object-grid two-col">
+        <label><span class="field-label">Tag</span><input value="${esc(item.tag)}" oninput="ccUpdateOutbound(${i}, 'tag', this.value)"></label>
+        <label><span class="field-label">Type</span><input value="${esc(item.type)}" oninput="ccUpdateOutbound(${i}, 'type', this.value)"></label>
+        <label class="object-span-full"><span class="field-label">Members (comma separated)</span><input value="${esc(joinList(item.members || item.outbounds))}" oninput="ccUpdateOutboundMembers(${i}, this.value)"></label>
+      </div>
+      <div class="muted">引用 ${Number(item.reference_count || 0)}</div>
+    </div>
+  `).join('');
+}
+
+function renderRouteRules(){
+  const box = document.getElementById('cc-routes-list');
+  const items = ccState.draft.route_rules || [];
+  if(!items.length){ box.innerHTML = '<div class="empty-text">暂无 route rule，点上方按钮可新增。</div>'; return; }
+  box.innerHTML = items.map((item, i)=>`
+    <div class="object-card">
+      <div class="card-title-row"><h3>#${i+1} ${esc(item.summary || item.outbound || item.action || 'Route Rule')}</h3><div class="actions toolbar-slim"><button type="button" class="ghost" onclick="ccMoveRouteRule(${i}, -1)">上移</button><button type="button" class="ghost" onclick="ccMoveRouteRule(${i}, 1)">下移</button><button type="button" class="ghost" onclick="ccRemoveRouteRule(${i})">删除</button></div></div>
+      <div class="object-grid two-col">
+        <label><span class="field-label">Type</span><input value="${esc(item.type)}" oninput="ccUpdateRouteRule(${i}, 'type', this.value)"></label>
+        <label><span class="field-label">Outbound</span><input value="${esc(item.outbound)}" oninput="ccUpdateRouteRule(${i}, 'outbound', this.value)"></label>
+        <label><span class="field-label">Action</span><input value="${esc(item.action)}" oninput="ccUpdateRouteRule(${i}, 'action', this.value)"></label>
+        <label><span class="field-label">Rule Sets (comma separated)</span><input value="${esc(joinList(item.rule_sets))}" oninput="ccUpdateRouteRuleList(${i}, 'rule_sets', this.value)"></label>
+        <label><span class="field-label">Inbound (comma separated)</span><input value="${esc(joinList(item.inbound))}" oninput="ccUpdateRouteRuleList(${i}, 'inbound', this.value)"></label>
+        <label><span class="field-label">Domain (comma separated)</span><input value="${esc(joinList(item.domain))}" oninput="ccUpdateRouteRuleList(${i}, 'domain', this.value)"></label>
+        <label><span class="field-label">Domain Suffix (comma separated)</span><input value="${esc(joinList(item.domain_suffix))}" oninput="ccUpdateRouteRuleList(${i}, 'domain_suffix', this.value)"></label>
+        <label><span class="field-label">IP CIDR (comma separated)</span><input value="${esc(joinList(item.ip_cidr))}" oninput="ccUpdateRouteRuleList(${i}, 'ip_cidr', this.value)"></label>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderAll(){
+  syncTextareasFromState();
+  renderRuleSets();
+  renderOutbounds();
+  renderRouteRules();
+}
+
+function ccAddRuleSet(){ ccState.draft.rule_sets.push({tag:'', type:'remote', format:'binary', source:'', enabled:true}); renderAll(); }
+function ccRemoveRuleSet(i){ ccState.draft.rule_sets.splice(i,1); renderAll(); }
+function ccUpdateRuleSet(i, key, value){ ccState.draft.rule_sets[i][key] = value; renderAll(); }
+
+function ccAddOutbound(){ ccState.draft.outbounds.push({tag:'', type:'direct', members:[], enabled:true}); renderAll(); }
+function ccRemoveOutbound(i){ ccState.draft.outbounds.splice(i,1); renderAll(); }
+function ccUpdateOutbound(i, key, value){ ccState.draft.outbounds[i][key] = value; renderAll(); }
+function ccUpdateOutboundMembers(i, value){ ccState.draft.outbounds[i].members = splitList(value); renderAll(); }
+
+function ccAddRouteRule(){ ccState.draft.route_rules.push({type:'', outbound:'', action:'', rule_sets:[], inbound:[], domain:[], domain_suffix:[], ip_cidr:[], enabled:true}); renderAll(); }
+function ccRemoveRouteRule(i){ ccState.draft.route_rules.splice(i,1); renderAll(); }
+function ccUpdateRouteRule(i, key, value){ ccState.draft.route_rules[i][key] = value; renderAll(); }
+function ccUpdateRouteRuleList(i, key, value){ ccState.draft.route_rules[i][key] = splitList(value); renderAll(); }
+function ccMoveRouteRule(i, delta){ const j=i+delta; if(j<0||j>=ccState.draft.route_rules.length) return; const arr=ccState.draft.route_rules; [arr[i],arr[j]]=[arr[j],arr[i]]; renderAll(); }
+
+function collectDraft(){
+  try { syncStateFromTextareas(); } catch (e) { throw new Error('Raw JSON 解析失败: ' + e.message); }
+  return normalizeDraft(ccState.draft);
+}
+
+function renderValidationResult(res){
+  const box = document.getElementById('config-center-validation');
+  if(!box) return;
+  const errors = Array.isArray(res.errors) ? res.errors : [];
+  const warnings = Array.isArray(res.warnings) ? res.warnings : [];
+  let html = '';
+  if(errors.length){ html += errors.map(x=>`<div class=\"bad\">• ${escapeHTML(x)}</div>`).join(''); }
+  else { html += '<div class=\"ok\">• 未发现结构化引用错误</div>'; }
+  if(warnings.length){ html += '<div class=\"divider\"></div>' + warnings.map(x=>`<div class=\"warn-text\">• ${escapeHTML(x)}</div>`).join(''); }
+  box.innerHTML = html;
+  const canApply = !!res.can_apply;
+  document.getElementById('cc-stat-apply').textContent = canApply ? '可应用' : '需修复';
+  const stat = document.getElementById('cc-stat-validation');
+  stat.textContent = `${errors.length} errors / ${warnings.length} warnings`;
+  stat.className = 'stat-sub ' + (canApply ? 'ok' : 'bad');
+}
+
+async function configCenterReloadDraft(){
+  const res = await request('/api/singbox/config-center/draft',{method:'GET', silent:true, busyText:'从当前配置加载草稿...'});
+  if(!res || !res.ok || !res.draft){ toast('加载草稿失败', false); return; }
+  ccState.draft = normalizeDraft(res.draft);
+  renderAll();
+  toast('已从当前配置重新加载');
+}
+
+async function configCenterValidateDraft(){
+  let draft;
+  try { draft = collectDraft(); } catch (e) { toast(e.message, false); return; }
+  const res = await request('/api/singbox/config-center/validate',{method:'POST', body: JSON.stringify({draft}), silent:true, busyText:'校验草稿...'});
+  if(!res){ toast('校验失败', false); return; }
+  renderValidationResult(res);
+  toast(res.ok ? `校验完成：${(res.errors||[]).length} errors / ${(res.warnings||[]).length} warnings` : ('校验失败: '+(res.error||'unknown')), !!res.ok);
+  if(!res.ok && res.error){ showErrorDetail(res.error); }
+}
+
+async function configCenterSaveDraft(){
+  let draft;
+  try { draft = collectDraft(); } catch (e) { toast(e.message, false); return; }
+  const res = await request('/api/singbox/config-center/save',{method:'POST', body: JSON.stringify({draft}), busyText:'保存配置中心草稿...'});
+  if(res && res.ok){ await configCenterReloadDraft(); await configCenterValidateDraft(); }
+}
+
+ccState.draft = normalizeDraft(ccState.draft);
+renderAll();
+</script>
+</main></div></body></html>

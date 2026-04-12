@@ -3,8 +3,10 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
 	"strings"
 
@@ -172,6 +174,88 @@ func (a *App) SystemInstallSingBoxAPI(w http.ResponseWriter, r *http.Request) {
 func (a *App) SystemInstallMosDNSAPI(w http.ResponseWriter, r *http.Request) {
 	res, err := a.MosDNS.InstallFromReference()
 	a.respondAudited(w, r, "system.install.mosdns", res, err, "MosDNS 安装成功")
+}
+
+// 离线安装：上传 mosdns 核心与（可选）配置包
+func (a *App) SystemInstallMosDNSUploadAPI(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(512 << 20); err != nil { // 512MB
+		respondMessage(w, fmt.Errorf("解析上传失败: %w", err), "")
+		return
+	}
+	coreFile, coreHdr, err := r.FormFile("file")
+	if err != nil {
+		respondMessage(w, fmt.Errorf("缺少 file 文件: %w", err), "")
+		return
+	}
+	defer coreFile.Close()
+	tmpCore, err := os.CreateTemp("", "mosdns-core-*")
+	if err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	defer os.Remove(tmpCore.Name())
+	if _, err := io.Copy(tmpCore, coreFile); err != nil {
+		tmpCore.Close()
+		respondMessage(w, err, "")
+		return
+	}
+	if err := tmpCore.Close(); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	cfgPath := ""
+	if cfgFile, _, err2 := r.FormFile("config"); err2 == nil {
+		defer cfgFile.Close()
+		tmpCfg, err3 := os.CreateTemp("", "mosdns-cfg-*")
+		if err3 != nil {
+			respondMessage(w, err3, "")
+			return
+		}
+		defer os.Remove(tmpCfg.Name())
+		if _, err := io.Copy(tmpCfg, cfgFile); err != nil {
+			tmpCfg.Close()
+			respondMessage(w, err, "")
+			return
+		}
+		if err := tmpCfg.Close(); err != nil {
+			respondMessage(w, err, "")
+			return
+		}
+		cfgPath = tmpCfg.Name()
+	}
+	res, err := a.MosDNS.InstallFromUploaded(tmpCore.Name(), cfgPath, coreHdr.Filename)
+	a.respondAudited(w, r, "system.install.mosdns.upload", res, err, "MosDNS 离线安装成功")
+}
+
+// 离线安装：上传 sing-box 核心包
+func (a *App) SystemInstallSingBoxUploadAPI(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(512 << 20); err != nil { // 512MB
+		respondMessage(w, fmt.Errorf("解析上传失败: %w", err), "")
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		respondMessage(w, fmt.Errorf("缺少 file 文件: %w", err), "")
+		return
+	}
+	defer file.Close()
+	tmp, err := os.CreateTemp("", "singbox-core-*")
+	if err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, file); err != nil {
+		tmp.Close()
+		respondMessage(w, err, "")
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	res, err := a.SingBox.UpgradeFromUploadedCore(tmp.Name(), hdr.Filename)
+	a.respondAudited(w, r, "system.install.singbox.upload", res, err, "Sing-box 离线安装成功")
 }
 
 func (a *App) SystemEnableIPForwardAPI(w http.ResponseWriter, r *http.Request) {
