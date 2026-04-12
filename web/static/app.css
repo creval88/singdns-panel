@@ -14,3 +14,5 @@
   .mosdns-frame{height:56vh}
   .editor{min-height:320px}
 }
+
+.compact-list{max-height:420px;overflow:auto}

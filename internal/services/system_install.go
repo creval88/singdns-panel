@@ -211,7 +211,7 @@ func (m *MosDNSService) InstallFromReference() (*OperationResult, error) {
 	cmd := `set -e
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
-sudo apt-get install -y wget unzip curl lsof tar ca-certificates
+sudo apt-get install -y wget unzip curl lsof tar ca-certificates rsync || sudo apt-get install -y wget unzip curl lsof tar ca-certificates
 
 BIN_PATH=/cus/bin
 CONFIG_PATH=/cus/mosdns
@@ -260,11 +260,19 @@ sudo install -m 755 "$MOSDNS_SRC" "$MOSDNS_BIN"
 
 curl -fL "$CONFIG_BASE_URL" -o "$TMP_DIR/mosdns_base.zip"
 unzip -oq "$TMP_DIR/mosdns_base.zip" -d "$TMP_DIR/mosdns_base"
-sudo rsync -a "$TMP_DIR/mosdns_base"/ "$CONFIG_PATH"/
+if command -v rsync >/dev/null 2>&1; then
+  sudo rsync -a "$TMP_DIR/mosdns_base"/ "$CONFIG_PATH"/
+else
+  sudo cp -a "$TMP_DIR/mosdns_base"/. "$CONFIG_PATH"/
+fi
 
 if curl -fsSL "$CONFIG_UPDATE_URL" -o "$TMP_DIR/mosdns_update.zip"; then
   unzip -oq "$TMP_DIR/mosdns_update.zip" -d "$TMP_DIR/mosdns_update"
-  sudo rsync -a "$TMP_DIR/mosdns_update"/ "$CONFIG_PATH"/
+  if command -v rsync >/dev/null 2>&1; then
+    sudo rsync -a "$TMP_DIR/mosdns_update"/ "$CONFIG_PATH"/
+  else
+    sudo cp -a "$TMP_DIR/mosdns_update"/. "$CONFIG_PATH"/
+  fi
 fi
 
 sudo chmod -R 777 "$CONFIG_PATH"

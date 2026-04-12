@@ -26,3 +26,5 @@
   #subscription-update-list .backup-item{gap:8px}
 }
 
+.compact-list{max-height:420px;overflow:auto}
+
