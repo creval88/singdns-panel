@@ -12,6 +12,29 @@ Go 内网管理面板 MVP：管理 sing-box / mosdns。
 - systemd / journalctl 服务层
 - `sbctl.sh` / `mdctl.sh` 非交互控制脚本
 - 部署模板与 sudoers 模板
+- 新设备一键安装：`install-from-github.sh`
+- 发布包安装 / 升级 / 卸载链路
+- 发布清单：`updates/latest.json`（beta / stable）
+
+## 最近功能更新（截至 `v20260411-beta2-hotfix27`）
+- **System / 网络设置**
+  - 新增更安全的 network settings backend
+  - 支持 `ifupdown` 后端
+  - 支持 `dns-only` 模式
+  - 对相同配置跳过重启，避免无意义断网
+  - apply 失败自动回滚
+  - 持久化 `last-good` 回滚点
+- **Sing-box / 升级与配置**
+  - 支持手动上传 core 并自动解压安装
+  - 修正上传 core 安装路径与 sudoers 对齐
+  - 修正 sing-box 默认路径与部署脚本保持一致
+  - 订阅视图拆分，保留手动导入状态
+  - 增加 IP forwarding 检查与更诚实的 monitor mode
+  - 保留 manual nodes draft，并与订阅节点合并展示
+- **发布与安装链路**
+  - beta manifest 已更新到 `20260411-beta2-hotfix27`
+  - 一键安装脚本支持按 `channel + arch` 拉取对应发布包
+  - 发布包内已包含 `install.sh / upgrade.sh / uninstall.sh / panel.json / systemd / sudoers`
 
 ## 本地运行
 ```bash
