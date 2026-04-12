@@ -308,7 +308,82 @@ sudo systemctl restart mosdns || sudo systemctl start mosdns
 }
 
 func EnsureMosDNSInstallDefaults(cfg *cfgpkg.MosDNSConfig) {
-	if cfg == nil {
-		return
+	if cfg == nil { return }
+}
+
+// 离线安装（上传包）
+func (m *MosDNSService) InstallFromUploaded(corePath, cfgZipPath, originalName string) (*OperationResult, error) {
+	// 允许 corePath 为 zip/tar/二进制；cfgZipPath 可为空
+	cmd := `set -e
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get update
+sudo apt-get install -y unzip tar ca-certificates || true
+
+BIN_PATH=/cus/bin
+CONFIG_PATH=/cus/mosdns
+MOSDNS_BIN=$BIN_PATH/mosdns
+SERVICE_FILE=/etc/systemd/system/mosdns.service
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+sudo mkdir -p "$BIN_PATH" "$CONFIG_PATH"
+
+# 处理核心包
+CORE_IN="` + corePath + `"
+NAME_IN="` + originalName + `"
+case "$NAME_IN" in
+  *.zip)
+    unzip -oq "$CORE_IN" -d "$TMP_DIR/core_extract"
+    SRC=$(find "$TMP_DIR/core_extract" -type f -name mosdns | head -n1) ;;
+  *.tar.gz|*.tgz)
+    tar -xzf "$CORE_IN" -C "$TMP_DIR/core_extract" || true
+    SRC=$(find "$TMP_DIR/core_extract" -type f -name mosdns | head -n1) ;;
+  *.tar)
+    tar -xf "$CORE_IN" -C "$TMP_DIR/core_extract" || true
+    SRC=$(find "$TMP_DIR/core_extract" -type f -name mosdns | head -n1) ;;
+  *)
+    SRC="$CORE_IN" ;;
+
+esac
+if [ -z "$SRC" ] || [ ! -s "$SRC" ]; then
+  echo '未在上传包中找到 mosdns 可执行文件' >&2
+  exit 1
+fi
+sudo install -m 755 "$SRC" "$MOSDNS_BIN"
+
+# 可选配置包
+if [ -n "` + cfgZipPath + `" ] && [ -s "` + cfgZipPath + `" ]; then
+  unzip -oq "` + cfgZipPath + `" -d "$TMP_DIR/cfg"
+  if command -v rsync >/dev/null 2>&1; then
+    sudo rsync -a "$TMP_DIR/cfg"/ "$CONFIG_PATH"/
+  else
+    sudo cp -a "$TMP_DIR/cfg"/. "$CONFIG_PATH"/
+  fi
+fi
+
+sudo chmod -R 777 "$CONFIG_PATH"
+cat <<'UNIT' | sudo tee "$SERVICE_FILE" >/dev/null
+[Unit]
+Description=MosDNS Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/cus/bin/mosdns start -c /cus/mosdns/config_custom.yaml -d /cus/mosdns
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+sudo systemctl daemon-reload
+sudo systemctl enable mosdns
+sudo systemctl restart mosdns || sudo systemctl start mosdns
+`
+	if err := runInstallShell(10*time.Minute, "离线安装 mosdns 失败", cmd); err != nil {
+		return nil, err
 	}
+	return &OperationResult{Action: "system.install.mosdns.upload", Message: "已通过上传包安装/更新 mosdns"}, nil
 }
