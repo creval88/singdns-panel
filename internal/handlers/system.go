@@ -169,13 +169,103 @@ func (a *App) SystemInstallSingBoxAPI(w http.ResponseWriter, r *http.Request) {
 	if !in.EnableIPForward {
 		in.EnableIPForward = true
 	}
+	// 分阶段审计（v1 粗粒度）
+	t0 := time.Now()
+	steps := make([]map[string]any, 0, 4)
+	step := func(code, msg, status string, since time.Time) map[string]any {
+		return map[string]any{
+			"code":        code,
+			"message":     msg,
+			"status":      status,
+			"duration_ms": time.Since(since).Milliseconds(),
+			"ended_at":    time.Now().Format(time.RFC3339),
+		}
+	}
+	steps = append(steps, step("precheck", "参数校验与环境快照", "ok", t0))
+
+	t1 := time.Now()
 	res, err := a.SingBox.InstallOfficial(in.EnableIPForward)
-	a.respondAudited(w, r, "system.install.singbox", res, err, "Sing-box 安装成功")
+	if err != nil {
+		steps = append(steps, step("install", "执行官方安装脚本", "failed", t1))
+		a.auditFromRequest(r, "system.install.singbox", err)
+		respondJSON(w, http.StatusOK, map[string]any{
+			"ok":      false,
+			"error":   err.Error(),
+			"message": "安装失败",
+			"steps":   steps,
+		})
+		return
+	}
+	steps = append(steps, step("install", "执行官方安装脚本", "ok", t1))
+
+	t2 := time.Now()
+	st, _ := a.SingBox.Status()
+	statusMsg := ""
+	if st != nil {
+		if st.Active {
+			statusMsg = "服务已启动"
+		} else {
+			statusMsg = "服务未启动"
+		}
+	}
+	steps = append(steps, step("verify", "服务状态校验："+statusMsg, "ok", t2))
+
+	a.auditMessageFromRequest(r, "system.install.singbox", res.AuditText())
+	respondJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"message": res.AuditText(),
+		"steps":   steps,
+	})
 }
 
 func (a *App) SystemInstallMosDNSAPI(w http.ResponseWriter, r *http.Request) {
+	// 分阶段审计（v1 粗粒度）
+	t0 := time.Now()
+	steps := make([]map[string]any, 0, 3)
+	step := func(code, msg, status string, since time.Time) map[string]any {
+		return map[string]any{
+			"code":        code,
+			"message":     msg,
+			"status":      status,
+			"duration_ms": time.Since(since).Milliseconds(),
+			"ended_at":    time.Now().Format(time.RFC3339),
+		}
+	}
+	steps = append(steps, step("precheck", "环境快照", "ok", t0))
+
+	t1 := time.Now()
 	res, err := a.MosDNS.InstallFromReference()
-	a.respondAudited(w, r, "system.install.mosdns", res, err, "MosDNS 安装成功")
+	if err != nil {
+		steps = append(steps, step("install", "执行参考安装逻辑", "failed", t1))
+		a.auditFromRequest(r, "system.install.mosdns", err)
+		respondJSON(w, http.StatusOK, map[string]any{
+			"ok":      false,
+			"error":   err.Error(),
+			"message": "安装失败",
+			"steps":   steps,
+		})
+		return
+	}
+	steps = append(steps, step("install", "执行参考安装逻辑", "ok", t1))
+
+	t2 := time.Now()
+	st, _ := a.MosDNS.Status()
+	statusMsg := ""
+	if st != nil {
+		if st.Active {
+			statusMsg = "服务已启动"
+		} else {
+			statusMsg = "服务未启动"
+		}
+	}
+	steps = append(steps, step("verify", "服务状态校验："+statusMsg, "ok", t2))
+
+	a.auditMessageFromRequest(r, "system.install.mosdns", res.AuditText())
+	respondJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"message": res.AuditText(),
+		"steps":   steps,
+	})
 }
 
 // 安装前出网预检（最小集）
