@@ -224,6 +224,7 @@ func main() {
 		pr.Post("/api/system/install/mosdns", app.SystemInstallMosDNSAPI)
 		pr.Post("/api/system/install/mosdns/upload", app.SystemInstallMosDNSUploadAPI)
 		pr.Post("/api/system/install/singbox/upload", app.SystemInstallSingBoxUploadAPI)
+		pr.Get("/api/system/install/preflight", app.SystemInstallPreflightAPI)
 		pr.Post("/api/system/ip-forward/enable", app.SystemEnableIPForwardAPI)
 		pr.Get("/api/system/network", app.SystemNetworkStatusAPI)
 		pr.Post("/api/system/network", app.SystemNetworkSaveAPI)

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	cfgpkg "singdns-panel/internal/config"
 	"singdns-panel/internal/services"
@@ -174,6 +176,40 @@ func (a *App) SystemInstallSingBoxAPI(w http.ResponseWriter, r *http.Request) {
 func (a *App) SystemInstallMosDNSAPI(w http.ResponseWriter, r *http.Request) {
 	res, err := a.MosDNS.InstallFromReference()
 	a.respondAudited(w, r, "system.install.mosdns", res, err, "MosDNS 安装成功")
+}
+
+// 安装前出网预检（最小集）
+func (a *App) SystemInstallPreflightAPI(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	client := &http.Client{Timeout: 5 * time.Second}
+	tests := []string{
+		"https://raw.githubusercontent.com/", // manifest/原始内容
+		"https://github.com/",                 // release 页面
+		"https://api.github.com/",            // API 速测
+	}
+	results := make(map[string]string)
+	okAll := true
+	for _, u := range tests {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodHead, u, nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			results[u] = err.Error()
+			okAll = false
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			results[u] = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			okAll = false
+		} else {
+			results[u] = "ok"
+		}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"ok":      okAll,
+		"results": results,
+	})
 }
 
 // 离线安装：上传 mosdns 核心与（可选）配置包
