@@ -82,6 +82,7 @@
             <button class="ghost" onclick="preflightInstall()">安装前预检</button>
           </div>
           <div class="section-note" id="install-preflight-note" style="margin-top:6px;">可在安装前进行出网预检；若不可达，建议使用下方“离线安装”。</div>
+          <div class="section-note" id="install-steps-log" style="white-space:pre-wrap; margin-top:6px;"></div>
 
           <div class="divider" style="margin-top:12px;"></div>
           <div class="card-title-row"><h3>离线安装</h3><span class="badge">Upload</span></div>
@@ -127,7 +128,7 @@
           </div>
           <div style="margin-bottom: 10px;">
             <label class="field-label" for="net-dns-input">系统 DNS（逗号分隔）</label>
-            <input id="net-dns-input" value="{{if .NetworkStatus}}{{if .NetworkStatus.RuntimeDNSText}}{{.NetworkStatus.RuntimeDNSText}}{{else}}{{.NetworkStatus.ConfigDNSText}}{{end}}{{end}}" placeholder="如 223.5.5.5, 1.1.1.1" style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;">
+            <input id="net-dns-input" value="{{if .NetworkStatus}}{{if .NetworkStatus.RuntimeDNSText}}{{.NetworkStatus.RuntimeDNSText}}{{else}}{{.NetworkStatus.ConfigDNSText}}{{end}}{{end}}" placeholder="如 223.5.5.5, 1.1.1.1" style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid #334; background: #1e293b; color: #e5eefc;">
           </div>
           <div class="actions">
             <button onclick="saveNetworkSettings()">保存网络设置</button>
@@ -182,6 +183,22 @@
         }
       }
 
+      function renderInstallSteps(steps) {
+        try {
+          const el = document.getElementById('install-steps-log');
+          if (!el) return;
+          if (!Array.isArray(steps) || steps.length === 0) { el.textContent = ''; return; }
+          const lines = steps.map(s => {
+            const code = s.code || '-';
+            const status = s.status || '-';
+            const dur = (s.duration_ms != null ? s.duration_ms : '-') + 'ms';
+            const msg = s.message || '';
+            return `${code} · ${status} · ${dur}${msg ? ' · ' + msg : ''}`;
+          });
+          el.textContent = lines.join('\n');
+        } catch(e) { /* ignore */ }
+      }
+
       async function uploadSingbox() {
         const file = document.getElementById('upload-singbox-core').files[0];
         if (!file) { toast('请选择 Sing-box 包', false); return; }
@@ -197,6 +214,7 @@
           });
           const j = await r.json();
           setBusy(false);
+          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
           if (j && j.ok) { toast(j.message || 'Sing-box 离线安装成功', true); await refreshInstallStatus(); }
           else { toast((j && (j.error||j.message)) || '安装失败', false); showErrorDetail(JSON.stringify(j||{}, null, 2)); }
         } catch(e) {
@@ -222,6 +240,7 @@
           });
           const j = await r.json();
           setBusy(false);
+          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
           if (j && j.ok) { toast(j.message || 'MosDNS 离线安装成功', true); await refreshInstallStatus(); }
           else { toast((j && (j.error||j.message)) || '安装失败', false); showErrorDetail(JSON.stringify(j||{}, null, 2)); }
         } catch(e) {
@@ -504,6 +523,7 @@
           body: JSON.stringify({ enable_ip_forward: true }),
           busyText:'正在安装 Sing-box，可能需要几分钟...'
         });
+        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
         if (j && j.ok) await refreshInstallStatus();
       }
 
@@ -514,6 +534,7 @@
           body: JSON.stringify({}),
           busyText:'正在安装 MosDNS，可能需要几分钟...'
         });
+        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
         if (j && j.ok) await refreshInstallStatus();
       }
 
