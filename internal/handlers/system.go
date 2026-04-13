@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -161,6 +162,26 @@ func (a *App) SystemInstallStatusAPI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func adviceForInstallError(err string) []string {
+	if strings.TrimSpace(err) == "" {
+		return nil
+	}
+	a := make([]string, 0, 4)
+	if strings.Contains(err, "rsync: command not found") {
+		a = append(a, "目标机缺少 rsync：apt-get install -y rsync；或升级到带 cp -a 兜底的最新面板后重试")
+	}
+	if strings.Contains(err, "/usr/bin/sing-box: no such file or directory") || strings.Contains(err, "fork/exec /usr/bin/sing-box: no such file or directory") {
+		a = append(a, "未找到 /usr/bin/sing-box：到系统设置→组件安装先安装 Sing-box，或在 panel.json 设置正确 BinPath")
+	}
+	if regexp.MustCompile(`(?i)(connection refused|TLS handshake timeout|i/o timeout|dial tcp .*: connect: operation timed out)`).MatchString(err) {
+		a = append(a, "出网异常：检查网络/代理，或改用“离线安装”上传包")
+	}
+	if strings.Contains(strings.ToLower(err), "permission denied") {
+		a = append(a, "权限不足：检查 sudoers.singdns-panel 与运行用户权限")
+	}
+	return a
+}
+
 func (a *App) SystemInstallSingBoxAPI(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		EnableIPForward bool `json:"enable_ip_forward"`
@@ -188,11 +209,13 @@ func (a *App) SystemInstallSingBoxAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		steps = append(steps, step("install", "执行官方安装脚本", "failed", t1))
 		a.auditFromRequest(r, "system.install.singbox", err)
+		hints := adviceForInstallError(err.Error())
 		respondJSON(w, http.StatusOK, map[string]any{
 			"ok":      false,
 			"error":   err.Error(),
 			"message": "安装失败",
 			"steps":   steps,
+			"hints":   hints,
 		})
 		return
 	}
@@ -238,11 +261,13 @@ func (a *App) SystemInstallMosDNSAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		steps = append(steps, step("install", "执行参考安装逻辑", "failed", t1))
 		a.auditFromRequest(r, "system.install.mosdns", err)
+		hints := adviceForInstallError(err.Error())
 		respondJSON(w, http.StatusOK, map[string]any{
 			"ok":      false,
 			"error":   err.Error(),
 			"message": "安装失败",
 			"steps":   steps,
+			"hints":   hints,
 		})
 		return
 	}
