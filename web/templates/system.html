@@ -82,6 +82,7 @@
             <button class="ghost" onclick="preflightInstall()">安装前预检</button>
           </div>
           <div class="section-note" id="install-preflight-note" style="margin-top:6px;">可在安装前进行出网预检；若不可达，建议使用下方“离线安装”。</div>
+          <div class="section-note" id="install-steps-log" style="white-space:pre-wrap; margin-top:6px;"></div>
 
           <div class="divider" style="margin-top:12px;"></div>
           <div class="card-title-row"><h3>离线安装</h3><span class="badge">Upload</span></div>
@@ -165,6 +166,88 @@
 
     <script src="/static/app.js"></script>
     <script>
+      async function preflightInstall() {
+        const note = document.getElementById('install-preflight-note');
+        if (note) note.textContent = '正在执行最小出网预检...';
+        try {
+          const r = await fetch('/api/system/install/preflight', {cache:'no-store'});
+          const j = await r.json();
+          const m = j.results || {};
+          const parts = [];
+          for (const k of Object.keys(m)) { parts.push((m[k] === 'ok' ? '✓' : '×') + ' ' + k); }
+          if (note) note.textContent = (j.ok ? '预检通过 · ' : '预检存在异常 · ') + parts.join(' · ');
+          toast(j.ok ? '预检通过' : '预检存在异常，建议改镜像或走离线上传', !!j.ok);
+        } catch(e) {
+          if (note) note.textContent = '预检失败：' + e;
+          toast('预检失败', false);
+        }
+      }
+
+      function renderInstallSteps(steps) {
+        try {
+          const el = document.getElementById('install-steps-log');
+          if (!el) return;
+          if (!Array.isArray(steps) || steps.length === 0) { el.textContent = ''; return; }
+          const lines = steps.map(s => {
+            const code = s.code || '-';
+            const status = s.status || '-';
+            const dur = (s.duration_ms != null ? s.duration_ms : '-') + 'ms';
+            const msg = s.message || '';
+            return `${code} · ${status} · ${dur}${msg ? ' · ' + msg : ''}`;
+          });
+          el.textContent = lines.join('\n');
+        } catch(e) { /* ignore */ }
+      }
+
+      async function uploadSingbox() {
+        const file = document.getElementById('upload-singbox-core').files[0];
+        if (!file) { toast('请选择 Sing-box 包', false); return; }
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        const token = await ensureCsrf();
+        setBusy(true, '正在上传并安装 Sing-box...');
+        try {
+          const r = await fetch('/api/system/install/singbox/upload', {
+            method: 'POST',
+            body: fd,
+            headers: { 'X-CSRF-Token': token }
+          });
+          const j = await r.json();
+          setBusy(false);
+          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
+          if (j && j.ok) { toast(j.message || 'Sing-box 离线安装成功', true); await refreshInstallStatus(); }
+          else { toast((j && (j.error||j.message)) || '安装失败', false); showErrorDetail(JSON.stringify(j||{}, null, 2)); }
+        } catch(e) {
+          setBusy(false);
+          toast('上传失败：' + e, false);
+        }
+      }
+
+      async function uploadMosdns() {
+        const core = document.getElementById('upload-mosdns-core').files[0];
+        const cfg = document.getElementById('upload-mosdns-config').files[0];
+        if (!core) { toast('请选择 MosDNS 包', false); return; }
+        const fd = new FormData();
+        fd.append('file', core, core.name);
+        if (cfg) fd.append('config', cfg, cfg.name);
+        const token = await ensureCsrf();
+        setBusy(true, '正在上传并安装 MosDNS...');
+        try {
+          const r = await fetch('/api/system/install/mosdns/upload', {
+            method: 'POST',
+            body: fd,
+            headers: { 'X-CSRF-Token': token }
+          });
+          const j = await r.json();
+          setBusy(false);
+          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
+          if (j && j.ok) { toast(j.message || 'MosDNS 离线安装成功', true); await refreshInstallStatus(); }
+          else { toast((j && (j.error||j.message)) || '安装失败', false); showErrorDetail(JSON.stringify(j||{}, null, 2)); }
+        } catch(e) {
+          setBusy(false);
+          toast('上传失败：' + e, false);
+        }
+      }
       async function changePassword() {
         const oldPwd = document.getElementById('old-pwd').value;
         const newPwd = document.getElementById('new-pwd').value;
@@ -338,6 +421,8 @@
       checkPanelRelease();
       probePanelRemote(true);
       refreshInstallStatus();
+      refreshInstallStatus();
+      refreshNetworkStatus();
 
       async function upgradePanel() {
         if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
@@ -360,8 +445,13 @@
           setBusy(false);
         }
       }
+      function getPanelRemoteUpgradeURLInput() {
+        return document.getElementById('singbox-remote-upgrade-url') || document.getElementById('remote-upgrade-url');
+      }
+
       async function upgradePanelRemote() {
-        const url = document.getElementById('remote-upgrade-url').value.trim();
+        const input = getPanelRemoteUpgradeURLInput();
+        const url = input ? input.value.trim() : '';
         if (!url) {
           const probe = await probePanelRemote(false);
           if (!probe || !probe.package_ok) {
@@ -433,6 +523,7 @@
           body: JSON.stringify({ enable_ip_forward: true }),
           busyText:'正在安装 Sing-box，可能需要几分钟...'
         });
+        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
         if (j && j.ok) await refreshInstallStatus();
       }
 
@@ -443,6 +534,7 @@
           body: JSON.stringify({}),
           busyText:'正在安装 MosDNS，可能需要几分钟...'
         });
+        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
         if (j && j.ok) await refreshInstallStatus();
       }
 
@@ -453,6 +545,32 @@
           busyText:'正在开启 IP 转发...'
         });
         if (j && j.ok) await refreshInstallStatus();
+      }
+
+      async function refreshNetworkStatus() {
+        try {
+          const r = await fetch('/api/system/network', {cache:'no-store'});
+          const j = await r.json();
+          if (!j.ok || !j.status) return;
+          const s = j.status || {};
+          document.getElementById('network-iface').textContent = s.interface || '-';
+          document.getElementById('network-mode').textContent = s.mode || '-';
+          document.getElementById('network-address').textContent = s.address ? (s.address + (s.prefix ? ('/' + s.prefix) : '')) : '-';
+          document.getElementById('network-runtime-dns').textContent = s.runtime_dns_text || s.dns_text || '-';
+          document.getElementById('network-config-dns').textContent = s.config_dns_text || '-';
+          document.getElementById('network-backend').textContent = s.backend || '-';
+          document.getElementById('network-last-good').textContent = s.last_good_path || '-';
+          document.getElementById('net-interface').value = s.interface || '';
+          document.getElementById('net-mode').value = s.mode || 'dhcp';
+          document.getElementById('net-address-input').value = s.address || '';
+          document.getElementById('net-prefix-input').value = s.prefix || '';
+          document.getElementById('net-gateway-input').value = s.gateway || '';
+          document.getElementById('net-dns-input').value = s.runtime_dns_text || s.config_dns_text || s.dns_text || '';
+          const note = document.getElementById('network-note');
+          if (note) note.textContent = s.summary || '网络状态已刷新';
+        } catch (e) {
+          console.log('refreshNetworkStatus failed', e);
+        }
       }
 
       async function saveNetworkSettings() {
