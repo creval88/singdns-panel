@@ -6,6 +6,10 @@ import (
 	authpkg "singdns-panel/internal/auth"
 )
 
+var sessionCreate = func(sm *authpkg.SessionManager, w http.ResponseWriter, username string) error {
+	return sm.Create(w, username)
+}
+
 func (a *App) LoginPage(w http.ResponseWriter, r *http.Request) {
 	token, _ := authpkg.NewCSRFToken()
 	authpkg.SetCSRFCookie(w, token)
@@ -30,8 +34,8 @@ func (a *App) LoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Limiter.Reset(ip)
-	if err := a.Sessions.Create(w, username); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := sessionCreate(a.Sessions, w, username); err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusFound)
