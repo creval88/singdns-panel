@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,8 @@ type ImportSummary struct {
 	ParsedNodeCount int
 	ExpandedGroups  []string
 	ManagedTags     []string
+	Mode            string
+	Compatibility   []string
 }
 
 func (s *SingBoxService) readSubscriptionBaseConfig() (string, error) {
@@ -48,7 +51,11 @@ func (s *SingBoxService) BuildConfigFromSubscription(_ string, content string) (
 
 	// 兼容旧行为：如果订阅本身返回完整 sing-box 配置，则直接采用该配置。
 	if isSingboxConfigJSON(trimmed) {
-		return trimmed, &ImportSummary{ParsedNodeCount: 0}, nil
+		cleaned, notes, err := s.sanitizeFullConfigSubscription(trimmed)
+		if err != nil {
+			return "", nil, err
+		}
+		return cleaned, &ImportSummary{ParsedNodeCount: 0, Mode: "full_config", Compatibility: notes}, nil
 	}
 
 	var nodes []map[string]any
@@ -88,13 +95,242 @@ func (s *SingBoxService) BuildConfigFromSubscription(_ string, content string) (
 	}
 	if summary != nil {
 		summary.ParsedNodeCount = len(nodes)
+		summary.Mode = "nodes_template"
 	}
 	return merged, summary, nil
 }
 
-func selectedNodeTagsFromTemplate(outbounds []any, nodeTags []string) (map[string]struct{}, []string) {
+func (s *SingBoxService) sanitizeFullConfigSubscription(content string) (string, []string, error) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return "", nil, fmt.Errorf("parse full config json: %w", err)
+	}
+
+	compatNotes := make([]string, 0, 4)
+	outbounds, _ := raw["outbounds"].([]any)
+	fallbackTag := templateDirectFallbackTag(outbounds)
+	providerNodes, providerNotes, err := s.expandOutboundProviders(raw, fallbackTag)
+	if err != nil {
+		return "", nil, err
+	}
+	compatNotes = append(compatNotes, providerNotes...)
+	if _, ok := raw["outbound_providers"]; ok {
+		delete(raw, "outbound_providers")
+		compatNotes = append(compatNotes, "已移除 R 核心扩展字段 outbound_providers，避免 stock sing-box 校验失败")
+	}
+	compatNotes = append(compatNotes, "完整配置模式会直接覆盖当前配置，不会自动合并模板订阅节点、手动节点草稿或配置中心未保存草稿")
+	if len(providerNodes) > 0 {
+		existingTags := map[string]struct{}{}
+		for _, item := range outbounds {
+			m, ok := item.(map[string]any)
+			if !ok || m == nil {
+				continue
+			}
+			tag := strings.TrimSpace(stringValue(m["tag"]))
+			if tag != "" {
+				existingTags[tag] = struct{}{}
+			}
+		}
+		for _, node := range providerNodes {
+			tag := strings.TrimSpace(stringValue(node["tag"]))
+			if tag == "" {
+				continue
+			}
+			if _, exists := existingTags[tag]; exists {
+				return "", nil, fmt.Errorf("provider 节点标签与现有 outbound 冲突: %s", tag)
+			}
+			existingTags[tag] = struct{}{}
+			outbounds = append(outbounds, node)
+		}
+		raw["outbounds"] = outbounds
+	}
+
+	b, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return "", nil, fmt.Errorf("marshal sanitized full config: %w", err)
+	}
+	return string(b), compatNotes, nil
+}
+
+type outboundProviderDef struct {
+	Tag string
+	URL string
+}
+
+func (s *SingBoxService) expandOutboundProviders(raw map[string]any, fallbackTag string) ([]map[string]any, []string, error) {
+	rawProviders, ok := raw["outbound_providers"]
+	if !ok {
+		return nil, nil, nil
+	}
+	providers := parseOutboundProviderDefs(rawProviders)
+	if len(providers) == 0 {
+		return nil, nil, nil
+	}
+
+	providerNodes := make(map[string][]map[string]any, len(providers))
+	compatNotes := make([]string, 0, len(providers))
+	allNodes := make([]map[string]any, 0)
+	for _, provider := range providers {
+		if provider.URL == "" {
+			return nil, nil, fmt.Errorf("provider %s 缺少 url", provider.Tag)
+		}
+		content, err := s.DownloadSubscription(provider.URL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("下载 provider %s 失败: %w", provider.Tag, err)
+		}
+		nodes, err := parseSubscriptionNodes(content)
+		if err != nil {
+			return nil, nil, fmt.Errorf("解析 provider %s 失败: %w", provider.Tag, err)
+		}
+		if len(nodes) == 0 {
+			return nil, nil, fmt.Errorf("provider %s 未解析到可用节点", provider.Tag)
+		}
+		providerNodes[provider.Tag] = nodes
+		allNodes = append(allNodes, nodes...)
+		compatNotes = append(compatNotes, fmt.Sprintf("已展开 provider %s：%d 个节点", provider.Tag, len(nodes)))
+	}
+
+	outbounds, _ := raw["outbounds"].([]any)
+	for _, item := range outbounds {
+		m, ok := item.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		providerTags := wholeStringSlice(m["providers"])
+		if len(providerTags) == 0 {
+			continue
+		}
+		groupNodes := make([]map[string]any, 0)
+		for _, tag := range providerTags {
+			groupNodes = append(groupNodes, providerNodes[tag]...)
+		}
+		includes := wholeStringSlice(m["includes"])
+		excludes := wholeStringSlice(m["excludes"])
+		selectedTags := filterNodeTagsByPatterns(groupNodes, includes, excludes)
+		outboundList := make([]any, 0, len(selectedTags))
+		seen := map[string]struct{}{}
+		for _, tag := range selectedTags {
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			outboundList = append(outboundList, tag)
+		}
+		if len(outboundList) == 0 && strings.TrimSpace(fallbackTag) != "" {
+			outboundList = append(outboundList, strings.TrimSpace(fallbackTag))
+		}
+		m["outbounds"] = outboundList
+		delete(m, "providers")
+		delete(m, "includes")
+		delete(m, "excludes")
+	}
+	return allNodes, compatNotes, nil
+}
+
+func parseOutboundProviderDefs(v any) []outboundProviderDef {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]outboundProviderDef, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		tag := strings.TrimSpace(stringValue(m["tag"]))
+		url := strings.TrimSpace(stringValue(m["url"]))
+		if tag == "" || url == "" {
+			continue
+		}
+		out = append(out, outboundProviderDef{Tag: tag, URL: url})
+	}
+	return out
+}
+
+func wholeStringSlice(v any) []string {
+	switch x := v.(type) {
+	case string:
+		x = strings.TrimSpace(x)
+		if x == "" {
+			return nil
+		}
+		return []string{x}
+	case []string:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			s = strings.TrimSpace(s)
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func filterNodeTagsByPatterns(nodes []map[string]any, includes, excludes []string) []string {
+	out := make([]string, 0, len(nodes))
+	seen := map[string]struct{}{}
+	for _, node := range nodes {
+		tag := strings.TrimSpace(stringValue(node["tag"]))
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		searchText := nodeSearchText(node)
+		if len(includes) > 0 && !matchAnyPattern(searchText, includes) {
+			continue
+		}
+		if len(excludes) > 0 && matchAnyPattern(searchText, excludes) {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
+}
+
+func matchAnyPattern(text string, patterns []string) bool {
+	textLower := strings.ToLower(text)
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if re, err := regexp.Compile("(?i)" + pattern); err == nil {
+			if re.MatchString(text) {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(textLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
+}
+
+func selectedNodeTagsFromTemplate(outbounds []any, nodes []map[string]any) (map[string]struct{}, []string) {
 	selected := make(map[string]struct{})
 	expanded := make([]string, 0)
+	fallbackTag := templateDirectFallbackTag(outbounds)
 	for _, item := range outbounds {
 		m, ok := item.(map[string]any)
 		if !ok {
@@ -104,7 +340,7 @@ func selectedNodeTagsFromTemplate(outbounds []any, nodeTags []string) (map[strin
 		if typ != "selector" && typ != "urltest" {
 			continue
 		}
-		ob, changed := expandAllPlaceholder(m, nodeTags)
+		ob, changed := expandAllPlaceholderForNodes(m, nodes, fallbackTag)
 		if !changed {
 			continue
 		}
@@ -188,7 +424,7 @@ func (s *SingBoxService) mergeSubscriptionNodesIntoConfig(baseConfig string, nod
 		nodeByTag[tag] = node
 	}
 
-	selectedTags, expanded := selectedNodeTagsFromTemplate(preserved, allNodeTags)
+	selectedTags, expanded := selectedNodeTagsFromTemplate(preserved, nodes)
 	finalManagedTags := make([]string, 0, len(allNodeTags))
 	for _, tag := range allNodeTags {
 		if _, ok := selectedTags[tag]; !ok {
@@ -214,6 +450,10 @@ func (s *SingBoxService) mergeSubscriptionNodesIntoConfig(baseConfig string, nod
 }
 
 func (s *SingBoxService) managedTagsStatePath() string {
+	return filepath.Join(s.managedStateDir(), "subscription-managed-tags.json")
+}
+
+func (s *SingBoxService) legacyManagedTagsStatePath() string {
 	baseDir := filepath.Dir(strings.TrimSpace(s.cfg.ConfigPath))
 	if baseDir == "" || baseDir == "." {
 		baseDir = "/etc/sing-box"
@@ -222,9 +462,22 @@ func (s *SingBoxService) managedTagsStatePath() string {
 }
 
 func (s *SingBoxService) readManagedTagsState() []string {
-	path := s.managedTagsStatePath()
-	b, err := osReadFile(path)
-	if err != nil {
+	paths := []string{s.managedTagsStatePath(), s.legacyManagedTagsStatePath()}
+	var b []byte
+	var err error
+	found := false
+	for _, path := range paths {
+		b, err = osReadFile(path)
+		if err == nil {
+			found = true
+			break
+		}
+		if os.IsNotExist(err) {
+			continue
+		}
+		return nil
+	}
+	if !found {
 		return nil
 	}
 	var tags []string
@@ -267,10 +520,18 @@ func (s *SingBoxService) writeManagedTagsState(tags []string) error {
 	return s.writeManagedFile(path, string(b)+"\n")
 }
 
+func (s *SingBoxService) clearManagedTagsState() error {
+	return s.writeManagedTagsState(nil)
+}
+
 // 通过变量包装，便于单测替换。
 var osReadFile = func(path string) ([]byte, error) { return os.ReadFile(path) }
 
 func expandAllPlaceholder(group map[string]any, nodeTags []string) ([]any, bool) {
+	return expandAllPlaceholderWithFallback(group, nodeTags, "direct")
+}
+
+func expandAllPlaceholderWithFallback(group map[string]any, nodeTags []string, fallbackTag string) ([]any, bool) {
 	rawList, _ := group["outbounds"].([]any)
 	if len(rawList) == 0 {
 		return rawList, false
@@ -318,9 +579,88 @@ func expandAllPlaceholder(group map[string]any, nodeTags []string) ([]any, bool)
 		appendTag(tag)
 	}
 	if len(out) == 0 {
-		appendTag("direct")
+		appendTag(strings.TrimSpace(fallbackTag))
 	}
 	return out, true
+}
+
+func expandAllPlaceholderForNodes(group map[string]any, nodes []map[string]any, fallbackTag string) ([]any, bool) {
+	rawList, _ := group["outbounds"].([]any)
+	if len(rawList) == 0 {
+		return rawList, false
+	}
+	containsAll := false
+	for _, item := range rawList {
+		if s, ok := item.(string); ok && strings.TrimSpace(s) == "{all}" {
+			containsAll = true
+			break
+		}
+	}
+	if !containsAll {
+		return rawList, false
+	}
+
+	includes, excludes := parseFilterRules(group["filter"])
+	selected := filterNodeTags(nodes, includes, excludes)
+
+	out := make([]any, 0, len(rawList)+len(selected))
+	seen := map[string]struct{}{}
+	appendTag := func(tag string) {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			return
+		}
+		if _, ok := seen[tag]; ok {
+			return
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+
+	for _, item := range rawList {
+		tag, ok := item.(string)
+		if !ok {
+			continue
+		}
+		tag = strings.TrimSpace(tag)
+		if tag == "{all}" {
+			for _, t := range selected {
+				appendTag(t)
+			}
+			continue
+		}
+		appendTag(tag)
+	}
+	if len(out) == 0 {
+		appendTag(strings.TrimSpace(fallbackTag))
+	}
+	return out, true
+}
+
+func templateDirectFallbackTag(outbounds []any) string {
+	for _, item := range outbounds {
+		m, ok := item.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		tag := strings.TrimSpace(stringValue(m["tag"]))
+		if tag == "direct" {
+			return tag
+		}
+	}
+	for _, item := range outbounds {
+		m, ok := item.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		if strings.TrimSpace(stringValue(m["type"])) != "direct" {
+			continue
+		}
+		if tag := strings.TrimSpace(stringValue(m["tag"])); tag != "" {
+			return tag
+		}
+	}
+	return "direct"
 }
 
 func parseFilterRules(v any) (includes []string, excludes []string) {
@@ -408,6 +748,60 @@ func filterTags(tags, includes, excludes []string) []string {
 		out = append(out, tag)
 	}
 	return out
+}
+
+func filterNodeTags(nodes []map[string]any, includes, excludes []string) []string {
+	out := make([]string, 0, len(nodes))
+	seen := map[string]struct{}{}
+	for _, node := range nodes {
+		tag := strings.TrimSpace(stringValue(node["tag"]))
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		searchText := nodeSearchText(node)
+		if len(includes) > 0 && !matchAnyRule(searchText, includes) {
+			continue
+		}
+		if len(excludes) > 0 && matchAnyRule(searchText, excludes) {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
+}
+
+func nodeSearchText(node map[string]any) string {
+	parts := []string{
+		strings.TrimSpace(stringValue(node["tag"])),
+		strings.TrimSpace(stringValue(node["type"])),
+		strings.TrimSpace(stringValue(node["server"])),
+	}
+	if tls, _ := node["tls"].(map[string]any); tls != nil {
+		if enabled, _ := tls["enabled"].(bool); enabled {
+			parts = append(parts, "tls")
+		}
+		if serverName := strings.TrimSpace(stringValue(tls["server_name"])); serverName != "" {
+			parts = append(parts, serverName)
+		}
+		if reality, _ := tls["reality"].(map[string]any); reality != nil {
+			if enabled, _ := reality["enabled"].(bool); enabled {
+				parts = append(parts, "reality")
+			}
+		}
+		if utls, _ := tls["utls"].(map[string]any); utls != nil {
+			if enabled, _ := utls["enabled"].(bool); enabled {
+				parts = append(parts, "utls")
+				if fp := strings.TrimSpace(stringValue(utls["fingerprint"])); fp != "" {
+					parts = append(parts, fp)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func matchAnyRule(tag string, rules []string) bool {
@@ -839,12 +1233,27 @@ func (s *SingBoxService) ImportSubscriptionFromURL(rawURL string) (*OperationRes
 		s.AppendSubscriptionUpdateEventDetailed("error", "import", "build", rawURL, err.Error(), time.Since(startedAt))
 		return nil, err
 	}
+	if summary != nil && summary.Mode == "full_config" {
+		if err := s.clearManagedTagsState(); err != nil {
+			s.AppendSubscriptionUpdateEventDetailed("error", "import", "state", rawURL, "清理旧的托管节点状态失败："+err.Error(), time.Since(startedAt))
+			return nil, err
+		}
+		for _, note := range summary.Compatibility {
+			s.AppendSubscriptionUpdateEventDetailed("info", "import", "compat", rawURL, note, time.Since(startedAt))
+		}
+	}
 	res, err := s.ApplySubscriptionContent(rawURL, finalConfig, startedAt)
 	if err != nil {
 		return nil, err
 	}
 	if summary != nil {
 		msg := fmt.Sprintf("订阅导入完成：解析节点 %d 个，展开组 %d 个", summary.ParsedNodeCount, len(summary.ExpandedGroups))
+		if summary.Mode == "full_config" {
+			msg = "完整配置订阅导入完成"
+		}
+		if len(summary.Compatibility) > 0 {
+			msg += "；" + strings.Join(summary.Compatibility, "；")
+		}
 		s.AppendSubscriptionUpdateEventDetailed("ok", "import", "summary", rawURL, msg, time.Since(startedAt))
 		if res != nil {
 			res.Message = msg + "；" + res.Message

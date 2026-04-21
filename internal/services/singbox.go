@@ -68,32 +68,54 @@ type SubscriptionNodeSummary struct {
 	MatchedGroups int    `json:"matched_groups"`
 }
 
+type SubscriptionSourceNode struct {
+	Tag       string   `json:"tag"`
+	Type      string   `json:"type,omitempty"`
+	Server    string   `json:"server,omitempty"`
+	Source    string   `json:"source"`
+	Groups    []string `json:"groups,omitempty"`
+	SelfBuilt bool     `json:"self_built"`
+}
+
+type SubscriptionSourceSummary struct {
+	ActiveMode        string                   `json:"active_mode"`
+	ManagedNodeCount  int                      `json:"managed_node_count"`
+	ManualNodeCount   int                      `json:"manual_node_count"`
+	SubscriptionCount int                      `json:"subscription_count"`
+	UnknownNodeCount  int                      `json:"unknown_node_count"`
+	SelfBuiltCount    int                      `json:"self_built_count"`
+	MatchedGroupCount int                      `json:"matched_group_count"`
+	Nodes             []SubscriptionSourceNode `json:"nodes"`
+	Notes             []string                 `json:"notes,omitempty"`
+}
+
 type SubscriptionStatus struct {
-	URL                    string                   `json:"url"`
-	URLs                   []string                 `json:"urls"`
-	Host                   string                   `json:"host"`
-	Hosts                  []string                 `json:"hosts"`
-	FullConfigURL          string                   `json:"full_config_url"`
-	NodeURLs               []string                 `json:"node_urls"`
-	NodeHosts              []string                 `json:"node_hosts"`
-	NodeResults            []SubscriptionNodeResult `json:"node_results"`
-	NodeSummary            *SubscriptionNodeSummary `json:"node_summary"`
-	FullConfigured         bool                     `json:"full_configured"`
-	NodeConfigured         bool                     `json:"node_configured"`
-	Configured             bool                     `json:"configured"`
-	HistoryCount           int                      `json:"history_count"`
-	LastHistoryTime        string                   `json:"last_history_time"`
-	UpdateCount            int                      `json:"update_count"`
-	LastUpdateTime         string                   `json:"last_update_time"`
-	LastUpdateStatus       string                   `json:"last_update_status"`
-	LastUpdateAction       string                   `json:"last_update_action"`
-	LastUpdateStage        string                   `json:"last_update_stage"`
-	LastUpdateMessage      string                   `json:"last_update_message"`
-	LastUpdateDurationMs   int64                    `json:"last_update_duration_ms"`
-	LastUpdateDurationText string                   `json:"last_update_duration_text"`
-	LastSuccessTime        string                   `json:"last_success_time"`
-	LastSuccessStage       string                   `json:"last_success_stage"`
-	LastSuccessMessage     string                   `json:"last_success_message"`
+	URL                    string                     `json:"url"`
+	URLs                   []string                   `json:"urls"`
+	Host                   string                     `json:"host"`
+	Hosts                  []string                   `json:"hosts"`
+	FullConfigURL          string                     `json:"full_config_url"`
+	NodeURLs               []string                   `json:"node_urls"`
+	NodeHosts              []string                   `json:"node_hosts"`
+	NodeResults            []SubscriptionNodeResult   `json:"node_results"`
+	NodeSummary            *SubscriptionNodeSummary   `json:"node_summary"`
+	FullConfigured         bool                       `json:"full_configured"`
+	NodeConfigured         bool                       `json:"node_configured"`
+	Configured             bool                       `json:"configured"`
+	HistoryCount           int                        `json:"history_count"`
+	LastHistoryTime        string                     `json:"last_history_time"`
+	UpdateCount            int                        `json:"update_count"`
+	LastUpdateTime         string                     `json:"last_update_time"`
+	LastUpdateStatus       string                     `json:"last_update_status"`
+	LastUpdateAction       string                     `json:"last_update_action"`
+	LastUpdateStage        string                     `json:"last_update_stage"`
+	LastUpdateMessage      string                     `json:"last_update_message"`
+	LastUpdateDurationMs   int64                      `json:"last_update_duration_ms"`
+	LastUpdateDurationText string                     `json:"last_update_duration_text"`
+	LastSuccessTime        string                     `json:"last_success_time"`
+	LastSuccessStage       string                     `json:"last_success_stage"`
+	LastSuccessMessage     string                     `json:"last_success_message"`
+	Sources                *SubscriptionSourceSummary `json:"sources"`
 }
 
 func normalizeSubscriptionURLs(raw string) []string {
@@ -388,16 +410,49 @@ func (s *SingBoxService) SaveSubscriptionURL(rawURL string) (*OperationResult, e
 }
 
 func (s *SingBoxService) UpdateSubscription() (*OperationResult, error) {
-	urls, err := s.ReadNodeSubscriptionURLs()
-	if err == nil && len(urls) > 0 {
-		return s.UpdateNodeSubscriptionsFromURLs(urls)
+	fullURL, fullErr := s.ReadFullConfigSubscriptionURL()
+	nodeURLs, nodeErr := s.ReadNodeSubscriptionURLs()
+	activeMode := detectSubscriptionActiveMode(strings.TrimSpace(fullURL), nodeURLs, s.readManagedTagsState())
+
+	switch activeMode {
+	case "nodes_template":
+		if len(nodeURLs) > 0 {
+			return s.UpdateNodeSubscriptionsFromURLs(nodeURLs)
+		}
+		if strings.TrimSpace(fullURL) != "" {
+			return s.UpdateFullConfigSubscriptionFromURL(fullURL)
+		}
+	case "full_config":
+		if strings.TrimSpace(fullURL) != "" {
+			return s.UpdateFullConfigSubscriptionFromURL(fullURL)
+		}
+		if len(nodeURLs) > 0 {
+			return s.UpdateNodeSubscriptionsFromURLs(nodeURLs)
+		}
 	}
-	rawURL, err := s.ReadFullConfigSubscriptionURL()
-	if err != nil {
+
+	switch {
+	case fullErr != nil && !os.IsNotExist(fullErr):
+		s.AppendSubscriptionUpdateEventDetailed("error", "update", "read-url", "", fullErr.Error(), 0)
+		return nil, fullErr
+	case nodeErr != nil && !os.IsNotExist(nodeErr):
+		s.AppendSubscriptionUpdateEventDetailed("error", "update", "read-node-urls", "", nodeErr.Error(), 0)
+		return nil, nodeErr
+	case len(nodeURLs) > 0:
+		return s.UpdateNodeSubscriptionsFromURLs(nodeURLs)
+	case strings.TrimSpace(fullURL) != "":
+		return s.UpdateFullConfigSubscriptionFromURL(fullURL)
+	case fullErr != nil:
+		s.AppendSubscriptionUpdateEventDetailed("error", "update", "read-url", "", fullErr.Error(), 0)
+		return nil, fullErr
+	case nodeErr != nil:
+		s.AppendSubscriptionUpdateEventDetailed("error", "update", "read-node-urls", "", nodeErr.Error(), 0)
+		return nil, nodeErr
+	default:
+		err := fmt.Errorf("subscription url is empty")
 		s.AppendSubscriptionUpdateEventDetailed("error", "update", "read-url", "", err.Error(), 0)
 		return nil, err
 	}
-	return s.UpdateFullConfigSubscriptionFromURL(rawURL)
 }
 
 func (s *SingBoxService) UpdateSubscriptionFromURL(rawURL string) (*OperationResult, error) {
@@ -647,6 +702,9 @@ func (s *SingBoxService) SubscriptionStatus() (*SubscriptionStatus, error) {
 			}
 		}
 	}
+	if sources, err := s.buildSubscriptionSourceSummary(fullURL, nodeURLs); err == nil && sources != nil {
+		info.Sources = sources
+	}
 	return info, nil
 }
 
@@ -752,11 +810,18 @@ func (s *SingBoxService) Upgrade() error {
 		return err
 	}
 
-	rollbackBin, err := s.prepareCoreRollbackBinary()
-	if err != nil {
-		err = fmt.Errorf("升级前备份当前内核失败: %w", err)
-		s.logCoreEvent("error", "upgrade", "prepare-rollback", err.Error(), time.Since(startedAt))
-		return err
+	// Try to prepare rollback only if an existing binary is present; do not fail upgrade when absent
+	rollbackBin := ""
+	if st, statErr := os.Stat(s.cfg.BinPath); statErr == nil && !st.IsDir() {
+		if rb, rbErr := s.prepareCoreRollbackBinary(); rbErr != nil {
+			s.logCoreEvent("warn", "upgrade", "prepare-rollback", fmt.Sprintf("升级前备份当前内核失败，将在失败时跳过自动回滚: %v", rbErr), time.Since(startedAt))
+		} else {
+			rollbackBin = rb
+		}
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		s.logCoreEvent("warn", "upgrade", "prepare-rollback", fmt.Sprintf("检查当前内核失败: %v", statErr), time.Since(startedAt))
+	} else {
+		s.logCoreEvent("info", "upgrade", "prepare-rollback", "未检测到已安装内核，将直接安装最新版本", time.Since(startedAt))
 	}
 
 	verNum := strings.TrimPrefix(latestVer, "v")
@@ -805,6 +870,9 @@ func (s *SingBoxService) Upgrade() error {
 	_, _ = runSudoNoPrompt(10*time.Second, "/bin/mkdir", "-p", filepath.Dir(s.cfg.BinPath))
 	if err := s.installCoreBinary(binPath); err != nil {
 		s.logCoreEvent("error", "upgrade", "install", err.Error(), time.Since(startedAt))
+		if strings.TrimSpace(rollbackBin) == "" {
+			return fmt.Errorf("安装新内核失败: %w", err)
+		}
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
 			s.logCoreEvent("ok", "rollback", "auto", "升级安装失败，已自动回退到升级前版本", time.Since(startedAt))
 			return fmt.Errorf("安装新内核失败，已自动回退到升级前版本: %w", err)
@@ -815,6 +883,9 @@ func (s *SingBoxService) Upgrade() error {
 	}
 	if res, err := runSudoNoPrompt(20*time.Second, "/bin/systemctl", "start", s.cfg.ServiceName); err != nil {
 		s.logCoreEvent("error", "upgrade", "start", commandOutputOrError(res, err), time.Since(startedAt))
+		if strings.TrimSpace(rollbackBin) == "" {
+			return fmt.Errorf("新内核启动失败: %w", err)
+		}
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
 			s.logCoreEvent("ok", "rollback", "auto", "新内核启动失败，已自动回退到升级前版本", time.Since(startedAt))
 			return fmt.Errorf("新内核启动失败，已自动回退到升级前版本: %w", err)
@@ -825,6 +896,9 @@ func (s *SingBoxService) Upgrade() error {
 	}
 	if err := s.verifyCoreVersion(); err != nil {
 		s.logCoreEvent("error", "upgrade", "verify", err.Error(), time.Since(startedAt))
+		if strings.TrimSpace(rollbackBin) == "" {
+			return fmt.Errorf("新内核版本校验失败: %w", err)
+		}
 		if rbErr := s.rollbackCoreFromBinary(rollbackBin); rbErr == nil {
 			s.logCoreEvent("ok", "rollback", "auto", "新内核校验失败，已自动回退到升级前版本", time.Since(startedAt))
 			return fmt.Errorf("新内核版本校验失败，已自动回退到升级前版本: %w", err)
@@ -1134,6 +1208,11 @@ func (s *SingBoxService) prepareCoreRollbackBinary() (string, error) {
 }
 
 func runSudoNoPrompt(timeout time.Duration, name string, args ...string) (*utils.CommandResult, error) {
+	// If already running as root, execute the target command directly
+	if os.Geteuid() == 0 {
+		return utils.Run(timeout, name, args...)
+	}
+	// Otherwise, invoke via sudo with non-interactive flag
 	allArgs := append([]string{"-n", name}, args...)
 	return utils.Run(timeout, "sudo", allArgs...)
 }
