@@ -166,7 +166,12 @@ func TestMergeSubscriptionNodesIntoConfig_MatchesManualRealityNodeByMetadata(t *
 
 func TestBuildConfigFromSubscription_SanitizesFullConfigProviderFields(t *testing.T) {
 	tmp := t.TempDir()
-	svc := &SingBoxService{cfg: cfgpkg.ServiceConfig{ConfigPath: filepath.Join(tmp, "config.json")}}
+	binPath := filepath.Join(tmp, "sing-box")
+	script := "#!/bin/sh\nif [ \"$1\" = \"check\" ]; then\n  echo 'FATAL decode config at /tmp/check.json: outbounds[0].excludes: json: unknown field \"excludes\"' 1>&2\n  exit 1\nfi\nexit 0\n"
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	svc := &SingBoxService{cfg: cfgpkg.ServiceConfig{ConfigPath: filepath.Join(tmp, "config.json"), BinPath: binPath}}
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{
@@ -259,6 +264,63 @@ func TestBuildConfigFromSubscription_SanitizesFullConfigProviderFields(t *testin
 	}
 	if !strings.Contains(strings.Join(summary.Compatibility, "；"), "已展开 provider demo：3 个节点") {
 		t.Fatalf("expected provider expansion note, got %#v", summary.Compatibility)
+	}
+}
+
+func TestBuildConfigFromSubscription_KeepsFullConfigProviderFieldsWhenCoreSupportsThem(t *testing.T) {
+	tmp := t.TempDir()
+	binPath := filepath.Join(tmp, "sing-box")
+	script := "#!/bin/sh\nif [ \"$1\" = \"check\" ]; then\n  exit 0\nfi\nexit 0\n"
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	svc := &SingBoxService{cfg: cfgpkg.ServiceConfig{ConfigPath: filepath.Join(tmp, "config.json"), BinPath: binPath}}
+
+	fullConfig := `{
+	  "log": {"level": "info"},
+	  "outbound_providers": [
+	    {"tag": "demo", "type": "remote", "url": "http://127.0.0.1:1/unreachable", "path": "./demo.yaml"}
+	  ],
+	  "outbounds": [
+	    {"type": "urltest", "tag": "auto", "providers": ["demo"], "includes": ["HK|JP"], "excludes": ["倍率"]},
+	    {"type": "direct", "tag": "🎯 全球直连"}
+	  ]
+	}`
+
+	got, summary, err := svc.BuildConfigFromSubscription("https://example.com/config.json", fullConfig)
+	if err != nil {
+		t.Fatalf("BuildConfigFromSubscription error: %v", err)
+	}
+	if summary == nil || summary.Mode != "full_config" {
+		t.Fatalf("summary = %#v, want full_config", summary)
+	}
+	if !strings.Contains(strings.Join(summary.Compatibility, "；"), "当前内核原生支持 provider 扩展字段") {
+		t.Fatalf("expected native provider support note, got %#v", summary.Compatibility)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(got), &raw); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if _, ok := raw["outbound_providers"]; !ok {
+		t.Fatalf("outbound_providers should be kept for compatible core: %#v", raw)
+	}
+	outbounds, _ := raw["outbounds"].([]any)
+	if len(outbounds) != 2 {
+		t.Fatalf("outbounds len = %d, want 2", len(outbounds))
+	}
+	first, _ := outbounds[0].(map[string]any)
+	if first == nil {
+		t.Fatalf("first outbound missing")
+	}
+	if _, ok := first["providers"]; !ok {
+		t.Fatalf("providers should be kept for compatible core: %#v", first)
+	}
+	if _, ok := first["includes"]; !ok {
+		t.Fatalf("includes should be kept for compatible core: %#v", first)
+	}
+	if _, ok := first["excludes"]; !ok {
+		t.Fatalf("excludes should be kept for compatible core: %#v", first)
 	}
 }
 

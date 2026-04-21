@@ -51,7 +51,7 @@ func (s *SingBoxService) BuildConfigFromSubscription(_ string, content string) (
 
 	// 兼容旧行为：如果订阅本身返回完整 sing-box 配置，则直接采用该配置。
 	if isSingboxConfigJSON(trimmed) {
-		cleaned, notes, err := s.sanitizeFullConfigSubscription(trimmed)
+		cleaned, notes, err := s.prepareFullConfigSubscription(trimmed)
 		if err != nil {
 			return "", nil, err
 		}
@@ -98,6 +98,31 @@ func (s *SingBoxService) BuildConfigFromSubscription(_ string, content string) (
 		summary.Mode = "nodes_template"
 	}
 	return merged, summary, nil
+}
+
+func (s *SingBoxService) prepareFullConfigSubscription(content string) (string, []string, error) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return "", nil, fmt.Errorf("parse full config json: %w", err)
+	}
+
+	if fullConfigUsesProviderExtensions(raw) {
+		keepRaw, err := s.shouldKeepNativeProviderConfig(content)
+		if err != nil {
+			return "", nil, err
+		}
+		if keepRaw {
+			return content, []string{
+				"检测到当前内核原生支持 provider 扩展字段，完整配置按订阅原样导入",
+				"完整配置模式会直接覆盖当前配置，不会自动合并模板订阅节点、手动节点草稿或配置中心未保存草稿",
+			}, nil
+		}
+		return s.sanitizeFullConfigSubscription(content)
+	}
+
+	return content, []string{
+		"完整配置模式会直接覆盖当前配置，不会自动合并模板订阅节点、手动节点草稿或配置中心未保存草稿",
+	}, nil
 }
 
 func (s *SingBoxService) sanitizeFullConfigSubscription(content string) (string, []string, error) {
@@ -150,6 +175,23 @@ func (s *SingBoxService) sanitizeFullConfigSubscription(content string) (string,
 		return "", nil, fmt.Errorf("marshal sanitized full config: %w", err)
 	}
 	return string(b), compatNotes, nil
+}
+
+func (s *SingBoxService) shouldKeepNativeProviderConfig(content string) (bool, error) {
+	binPath := strings.TrimSpace(s.cfg.BinPath)
+	if binPath == "" {
+		return false, nil
+	}
+	st, err := os.Stat(binPath)
+	if err != nil || st.IsDir() {
+		return false, nil
+	}
+	if err := s.ValidateConfig(content); err == nil {
+		return true, nil
+	} else if !isUnsupportedProviderFieldError(err.Error()) {
+		return false, err
+	}
+	return false, nil
 }
 
 type outboundProviderDef struct {
@@ -246,6 +288,51 @@ func parseOutboundProviderDefs(v any) []outboundProviderDef {
 		out = append(out, outboundProviderDef{Tag: tag, URL: url})
 	}
 	return out
+}
+
+func fullConfigUsesProviderExtensions(raw map[string]any) bool {
+	if raw == nil {
+		return false
+	}
+	if _, ok := raw["outbound_providers"]; ok {
+		return true
+	}
+	outbounds, _ := raw["outbounds"].([]any)
+	for _, item := range outbounds {
+		m, ok := item.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		if _, ok := m["providers"]; ok {
+			return true
+		}
+		if _, ok := m["includes"]; ok {
+			return true
+		}
+		if _, ok := m["excludes"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isUnsupportedProviderFieldError(message string) bool {
+	msg := strings.ToLower(strings.TrimSpace(message))
+	if msg == "" {
+		return false
+	}
+	markers := []string{
+		`unknown field "outbound_providers"`,
+		`.providers: json: unknown field "providers"`,
+		`.includes: json: unknown field "includes"`,
+		`.excludes: json: unknown field "excludes"`,
+	}
+	for _, marker := range markers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func wholeStringSlice(v any) []string {
