@@ -4,6 +4,7 @@
 
 ## 修复
 - 一键安装脚本默认 manifest 改为 GitHub Release 最新资产：`releases/latest/download/latest.json`。
+- 安装脚本默认先查询 GitHub Releases API，再下载当前 Latest Release 中 `latest.json` 的直连资产，避免 `latest/download` 别名缓存。
 - 文档推荐命令改为下载 Release 资产里的 `install-from-github.sh`，避免 raw main 短时间缓存导致仍安装旧版本。
 - 新生成的面板默认更新源也改为 `releases/latest/download/latest.json`。
 - 保留 hotfix31 的已有服务检测：已安装面板时执行 `upgrade.sh`，确保服务重启到新版本。

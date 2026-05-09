@@ -5,12 +5,12 @@ set -euo pipefail
 # 用法（默认 beta 渠道）：
 #   curl -fsSL https://github.com/creval88/singdns-panel/releases/latest/download/install-from-github.sh | sudo bash
 # 可选环境变量：
-#   CHANNEL=stable REPO=creval88/singdns-panel MANIFEST_URL=https://github.com/creval88/singdns-panel/releases/latest/download/latest.json
+#   CHANNEL=stable REPO=creval88/singdns-panel MANIFEST_URL=https://github.com/creval88/singdns-panel/releases/download/vXXXX/latest.json
 
 REPO="${REPO:-creval88/singdns-panel}"
 CHANNEL="${CHANNEL:-beta}"
 ARCH="${ARCH:-}"
-MANIFEST_URL="${MANIFEST_URL:-https://github.com/${REPO}/releases/latest/download/latest.json}"
+MANIFEST_URL="${MANIFEST_URL:-https://api.github.com/repos/${REPO}/releases/latest}"
 WORK_DIR="${WORK_DIR:-/tmp/singdns-panel-install}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
 APP_NAME="singdns-panel"
@@ -90,6 +90,35 @@ trap cleanup EXIT
 
 echo "[1/5] 获取 manifest: $MANIFEST_URL"
 curl -fL "$MANIFEST_URL" -o "$MANIFEST_PATH"
+
+MANIFEST_ASSET_URL="$(python3 - <<'PY' "$MANIFEST_PATH"
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding='utf-8'))
+except Exception:
+    print('')
+    sys.exit(0)
+
+assets = data.get('assets')
+if not isinstance(assets, list):
+    print('')
+    sys.exit(0)
+
+for asset in assets:
+    if isinstance(asset, dict) and asset.get('name') == 'latest.json':
+        print(str(asset.get('browser_download_url') or '').strip())
+        sys.exit(0)
+
+print('')
+PY
+)"
+
+if [[ -n "$MANIFEST_ASSET_URL" ]]; then
+  echo "[INFO] latest release manifest: $MANIFEST_ASSET_URL"
+  curl -fL "$MANIFEST_ASSET_URL" -o "$MANIFEST_PATH"
+fi
 
 echo "[2/5] 解析发布包（channel=$CHANNEL, arch=$ARCH）"
 RELEASE_INFO="$(python3 - <<'PY' "$MANIFEST_PATH" "$CHANNEL" "$ARCH"
