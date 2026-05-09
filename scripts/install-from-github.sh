@@ -13,6 +13,7 @@ ARCH="${ARCH:-}"
 MANIFEST_URL="${MANIFEST_URL:-https://raw.githubusercontent.com/${REPO}/main/updates/latest.json}"
 WORK_DIR="${WORK_DIR:-/tmp/singdns-panel-install}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
+APP_NAME="singdns-panel"
 
 if [[ $EUID -ne 0 ]]; then
   echo "[ERR] 请使用 root 运行（例如: curl ... | sudo bash）"
@@ -173,9 +174,14 @@ if [[ ! -x "$REL_DIR/install.sh" ]]; then
   exit 1
 fi
 
-echo "[5/5] 执行安装脚本"
+echo "[5/5] 执行安装/升级脚本"
 mkdir -p /etc/sudoers.d
 cd "$REL_DIR"
-bash install.sh
+if command -v systemctl >/dev/null 2>&1 && systemctl cat "$APP_NAME" >/dev/null 2>&1 && [[ -x "$REL_DIR/upgrade.sh" ]]; then
+  echo "[INFO] 检测到已有 $APP_NAME 服务，执行 upgrade.sh 以确保服务重启到新版本"
+  bash upgrade.sh
+else
+  bash install.sh
+fi
 
 echo "[DONE] 安装完成"

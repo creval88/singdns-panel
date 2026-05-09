@@ -125,7 +125,13 @@ chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
 chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
 
 systemctl daemon-reload
-systemctl enable --now "$APP_NAME"
+systemctl enable "$APP_NAME"
+if systemctl is-active --quiet "$APP_NAME"; then
+  systemctl restart "$APP_NAME"
+else
+  systemctl start "$APP_NAME"
+fi
+systemctl is-active --quiet "$APP_NAME" || { echo "安装后服务未启动"; exit 1; }
 
 echo "安装完成: http://$(hostname -I | awk '{print $1}'):9999"
 EOF
