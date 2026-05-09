@@ -22,7 +22,7 @@ const DefaultConfigTemplate = `{
   "panel_update": {
     "release_dir": "/opt/singdns-panel/updates",
     "upgrade_command": "",
-    "base_url": "https://raw.githubusercontent.com/creval88/singdns-panel/main/updates/latest.json",
+    "base_url": "https://github.com/creval88/singdns-panel/releases/latest/download/latest.json",
     "channel": "beta",
     "arch": "amd64"
   },

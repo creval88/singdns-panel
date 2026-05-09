@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 一键安装：从 GitHub 拉取最新发布包并执行 install.sh
+# 一键安装/升级：从 GitHub 拉取最新发布包并执行 install.sh 或 upgrade.sh
 # 用法（默认 beta 渠道）：
-#   curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh | sudo bash
+#   curl -fsSL https://github.com/creval88/singdns-panel/releases/latest/download/install-from-github.sh | sudo bash
 # 可选环境变量：
-#   CHANNEL=stable REPO=creval88/singdns-panel MANIFEST_URL=https://raw.githubusercontent.com/creval88/singdns-panel/main/updates/latest.json
+#   CHANNEL=stable REPO=creval88/singdns-panel MANIFEST_URL=https://github.com/creval88/singdns-panel/releases/latest/download/latest.json
 
 REPO="${REPO:-creval88/singdns-panel}"
 CHANNEL="${CHANNEL:-beta}"
 ARCH="${ARCH:-}"
-MANIFEST_URL="${MANIFEST_URL:-https://raw.githubusercontent.com/${REPO}/main/updates/latest.json}"
+MANIFEST_URL="${MANIFEST_URL:-https://github.com/${REPO}/releases/latest/download/latest.json}"
 WORK_DIR="${WORK_DIR:-/tmp/singdns-panel-install}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
 APP_NAME="singdns-panel"

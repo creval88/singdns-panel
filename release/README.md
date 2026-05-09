@@ -36,14 +36,14 @@ sudo bash install.sh
 直接从 GitHub 拉取最新发布包并安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh | sudo bash
+curl -fsSL https://github.com/creval88/singdns-panel/releases/latest/download/install-from-github.sh | sudo bash
 ```
 
 可选：
 
 ```bash
 # 使用 stable 渠道
-curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh \
+curl -fsSL https://github.com/creval88/singdns-panel/releases/latest/download/install-from-github.sh \
   | sudo CHANNEL=stable bash
 ```
 

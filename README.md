@@ -78,14 +78,14 @@ sudo bash deploy/install.sh
 适用于**全新 Debian 设备**，无需先 clone 仓库：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh | sudo bash
+curl -fsSL https://github.com/creval88/singdns-panel/releases/latest/download/install-from-github.sh | sudo bash
 ```
 
 可选参数（按需）：
 
 ```bash
 # stable 渠道 + arm64
-curl -fsSL https://raw.githubusercontent.com/creval88/singdns-panel/main/scripts/install-from-github.sh \
+curl -fsSL https://github.com/creval88/singdns-panel/releases/latest/download/install-from-github.sh \
   | sudo CHANNEL=stable ARCH=arm64 bash
 ```
 
