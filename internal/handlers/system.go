@@ -194,6 +194,9 @@ func adviceForInstallError(err string) []string {
 	if strings.Contains(strings.ToLower(err), "permission denied") {
 		a = append(a, "权限不足：检查 sudoers.singdns-panel 与运行用户权限")
 	}
+	if strings.Contains(strings.ToLower(err), "sudo: a terminal is required") || strings.Contains(strings.ToLower(err), "sudo: a password is required") {
+		a = append(a, "sudoers 未放行该安装动作：升级到最新面板后会安装固定 root helper 并更新 sudoers")
+	}
 	return a
 }
 

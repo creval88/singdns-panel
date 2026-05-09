@@ -77,8 +77,9 @@ func commandError(step string, err error, res *utils.CommandResult) error {
 	return fmt.Errorf(strings.Join(parts, " | "))
 }
 
-func runInstallShell(timeout time.Duration, step, command string) error {
-	res, err := utils.RunShell(timeout, command)
+func runRootHelper(timeout time.Duration, step, helper string, args ...string) error {
+	allArgs := append([]string{"-n", helper}, args...)
+	res, err := utils.Run(timeout, "sudo", allArgs...)
 	if err != nil {
 		return commandError(step, err, res)
 	}
@@ -183,56 +184,16 @@ func CollectSystemInstallStatus(singbox *SingBoxService, mosdns *MosDNSService) 
 }
 
 func (s *SingBoxService) EnableIPForward() error {
-	content := "net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n"
-	tmp, err := os.CreateTemp("", "singdns-ipforward-*.conf")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if _, err := utils.Run(10*time.Second, "sudo", "mkdir", "-p", "/etc/sysctl.d"); err != nil {
-		return err
-	}
-	if _, err := utils.Run(10*time.Second, "sudo", "install", "-m", "644", tmpPath, "/etc/sysctl.d/99-ipforward.conf"); err != nil {
-		return err
-	}
-	if _, err := utils.Run(10*time.Second, "sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"); err != nil {
-		return err
-	}
-	if _, err := utils.Run(10*time.Second, "sudo", "sysctl", "-w", "net.ipv6.conf.all.forwarding=1"); err != nil {
-		return err
-	}
-	if _, err := utils.Run(10*time.Second, "sudo", "sysctl", "--system"); err != nil {
-		return err
-	}
-	return nil
+	return runRootHelper(30*time.Second, "开启 IP 转发失败", "/usr/local/bin/singdns-panel-enable-ip-forward.sh")
 }
 
 func (s *SingBoxService) InstallOfficial(enableIPForward bool) (*OperationResult, error) {
-	cmd := `set -e
-export DEBIAN_FRONTEND=noninteractive
-if ! command -v curl >/dev/null 2>&1; then
-  sudo apt-get update
-  sudo apt-get install -y curl ca-certificates
-fi
-curl -fsSL https://sing-box.app/install.sh | sudo bash
-sudo systemctl enable sing-box
-sudo systemctl restart sing-box || sudo systemctl start sing-box
-`
-	if err := runInstallShell(12*time.Minute, "安装 sing-box 失败", cmd); err != nil {
-		return nil, err
-	}
+	enable := "0"
 	if enableIPForward {
-		if err := s.EnableIPForward(); err != nil {
-			return nil, fmt.Errorf("sing-box 已安装，但开启 IP 转发失败: %w", err)
-		}
+		enable = "1"
+	}
+	if err := runRootHelper(12*time.Minute, "安装 sing-box 失败", "/usr/local/bin/singdns-panel-install-singbox.sh", enable); err != nil {
+		return nil, err
 	}
 	msg := "已按官方方式安装 sing-box"
 	if enableIPForward {
@@ -246,95 +207,7 @@ func (m *MosDNSService) InstallFromReference() (*OperationResult, error) {
 	cfg := m.cfg
 	m.mu.RUnlock()
 
-	cmd := `set -e
-export DEBIAN_FRONTEND=noninteractive
-sudo apt-get update
-sudo apt-get install -y wget unzip curl lsof tar ca-certificates rsync || sudo apt-get install -y wget unzip curl lsof tar ca-certificates
-
-BIN_PATH=/cus/bin
-CONFIG_PATH=/cus/mosdns
-MOSDNS_BIN=$BIN_PATH/mosdns
-SERVICE_FILE=/etc/systemd/system/mosdns.service
-CONFIG_BASE_URL=https://raw.githubusercontent.com/yyysuo/firetv/refs/heads/master/mosdnsconfigupdate/mosdns1225all.zip
-CONFIG_UPDATE_URL=https://raw.githubusercontent.com/yyysuo/firetv/refs/heads/master/mosdnsconfigupdate/mosdns20251225allup.zip
-TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-ARCH_RAW=$(uname -m)
-case "$ARCH_RAW" in
-  x86_64) ARCH_STR=amd64 ;;
-  aarch64) ARCH_STR=arm64 ;;
-  *) echo "unsupported arch: $ARCH_RAW" >&2; exit 1 ;;
-esac
-
-if command -v ss >/dev/null 2>&1 && ss -lntup 2>/dev/null | grep -q ':53 '; then
-  if systemctl is-active --quiet systemd-resolved 2>/dev/null || systemctl is-enabled --quiet systemd-resolved 2>/dev/null; then
-    sudo systemctl stop systemd-resolved || true
-    sudo systemctl disable systemd-resolved || true
-    printf 'nameserver 223.5.5.5\n' | sudo tee /etc/resolv.conf >/dev/null
-  else
-    lsof -i :53 || true
-  fi
-fi
-
-TAG_VERSION=$(curl -fsSL https://api.github.com/repos/yyysuo/mosdns/releases/latest | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-if [ -z "$TAG_VERSION" ]; then
-  echo 'failed to resolve latest mosdns release tag' >&2
-  exit 1
-fi
-DOWNLOAD_URL="https://github.com/yyysuo/mosdns/releases/download/${TAG_VERSION}/mosdns-linux-${ARCH_STR}.zip"
-
-sudo systemctl stop mosdns || true
-sudo mkdir -p "$BIN_PATH" "$CONFIG_PATH"
-
-curl -fL "$DOWNLOAD_URL" -o "$TMP_DIR/mosdns.zip"
-unzip -oq "$TMP_DIR/mosdns.zip" -d "$TMP_DIR/mosdns_extract"
-MOSDNS_SRC=$(find "$TMP_DIR/mosdns_extract" -type f -name mosdns | head -n1)
-if [ -z "$MOSDNS_SRC" ]; then
-  echo 'mosdns binary not found in release zip' >&2
-  exit 1
-fi
-sudo install -m 755 "$MOSDNS_SRC" "$MOSDNS_BIN"
-
-curl -fL "$CONFIG_BASE_URL" -o "$TMP_DIR/mosdns_base.zip"
-unzip -oq "$TMP_DIR/mosdns_base.zip" -d "$TMP_DIR/mosdns_base"
-if command -v rsync >/dev/null 2>&1; then
-  sudo rsync -a "$TMP_DIR/mosdns_base"/ "$CONFIG_PATH"/
-else
-  sudo cp -a "$TMP_DIR/mosdns_base"/. "$CONFIG_PATH"/
-fi
-
-if curl -fsSL "$CONFIG_UPDATE_URL" -o "$TMP_DIR/mosdns_update.zip"; then
-  unzip -oq "$TMP_DIR/mosdns_update.zip" -d "$TMP_DIR/mosdns_update"
-  if command -v rsync >/dev/null 2>&1; then
-    sudo rsync -a "$TMP_DIR/mosdns_update"/ "$CONFIG_PATH"/
-  else
-    sudo cp -a "$TMP_DIR/mosdns_update"/. "$CONFIG_PATH"/
-  fi
-fi
-
-sudo chmod -R u=rwX,go=rX "$CONFIG_PATH"
-cat <<'UNIT' | sudo tee "$SERVICE_FILE" >/dev/null
-[Unit]
-Description=MosDNS Service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/cus/bin/mosdns start -c /cus/mosdns/config_custom.yaml -d /cus/mosdns
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-sudo systemctl daemon-reload
-sudo systemctl enable mosdns
-sudo systemctl restart mosdns || sudo systemctl start mosdns
-`
-	if err := runInstallShell(15*time.Minute, "安装 mosdns 失败", cmd); err != nil {
+	if err := runRootHelper(15*time.Minute, "安装 mosdns 失败", "/usr/local/bin/singdns-panel-install-mosdns.sh"); err != nil {
 		return nil, err
 	}
 
@@ -353,80 +226,7 @@ func EnsureMosDNSInstallDefaults(cfg *cfgpkg.MosDNSConfig) {
 
 // 离线安装（上传包）
 func (m *MosDNSService) InstallFromUploaded(corePath, cfgZipPath, originalName string) (*OperationResult, error) {
-	// 允许 corePath 为 zip/tar/二进制；cfgZipPath 可为空
-	corePathArg := shellQuote(corePath)
-	cfgZipPathArg := shellQuote(cfgZipPath)
-	originalNameArg := shellQuote(originalName)
-	cmd := `set -e
-export DEBIAN_FRONTEND=noninteractive
-sudo apt-get update
-sudo apt-get install -y unzip tar ca-certificates || true
-
-BIN_PATH=/cus/bin
-CONFIG_PATH=/cus/mosdns
-MOSDNS_BIN=$BIN_PATH/mosdns
-SERVICE_FILE=/etc/systemd/system/mosdns.service
-TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-sudo mkdir -p "$BIN_PATH" "$CONFIG_PATH"
-
-# 处理核心包
-CORE_IN=` + corePathArg + `
-NAME_IN=` + originalNameArg + `
-case "$NAME_IN" in
-  *.zip)
-    unzip -oq "$CORE_IN" -d "$TMP_DIR/core_extract"
-    SRC=$(find "$TMP_DIR/core_extract" -type f -name mosdns | head -n1) ;;
-  *.tar.gz|*.tgz)
-    tar -xzf "$CORE_IN" -C "$TMP_DIR/core_extract" || true
-    SRC=$(find "$TMP_DIR/core_extract" -type f -name mosdns | head -n1) ;;
-  *.tar)
-    tar -xf "$CORE_IN" -C "$TMP_DIR/core_extract" || true
-    SRC=$(find "$TMP_DIR/core_extract" -type f -name mosdns | head -n1) ;;
-  *)
-    SRC="$CORE_IN" ;;
-
-esac
-if [ -z "$SRC" ] || [ ! -s "$SRC" ]; then
-  echo '未在上传包中找到 mosdns 可执行文件' >&2
-  exit 1
-fi
-sudo install -m 755 "$SRC" "$MOSDNS_BIN"
-
-# 可选配置包
-CFG_IN=` + cfgZipPathArg + `
-if [ -n "$CFG_IN" ] && [ -s "$CFG_IN" ]; then
-  unzip -oq "$CFG_IN" -d "$TMP_DIR/cfg"
-  if command -v rsync >/dev/null 2>&1; then
-    sudo rsync -a "$TMP_DIR/cfg"/ "$CONFIG_PATH"/
-  else
-    sudo cp -a "$TMP_DIR/cfg"/. "$CONFIG_PATH"/
-  fi
-fi
-
-sudo chmod -R u=rwX,go=rX "$CONFIG_PATH"
-cat <<'UNIT' | sudo tee "$SERVICE_FILE" >/dev/null
-[Unit]
-Description=MosDNS Service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/cus/bin/mosdns start -c /cus/mosdns/config_custom.yaml -d /cus/mosdns
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-sudo systemctl daemon-reload
-sudo systemctl enable mosdns
-sudo systemctl restart mosdns || sudo systemctl start mosdns
-`
-	if err := runInstallShell(10*time.Minute, "离线安装 mosdns 失败", cmd); err != nil {
+	if err := runRootHelper(10*time.Minute, "离线安装 mosdns 失败", "/usr/local/bin/singdns-panel-install-mosdns-upload.sh", corePath, cfgZipPath, originalName); err != nil {
 		return nil, err
 	}
 	return &OperationResult{Action: "system.install.mosdns.upload", Message: "已通过上传包安装/更新 mosdns"}, nil

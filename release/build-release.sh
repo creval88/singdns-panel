@@ -41,6 +41,10 @@ cp configs/panel.example.json "$REL_DIR/panel.json"
 echo "[2/5] 复制脚本与部署文件..."
 cp scripts/sbctl.sh "$REL_DIR/sbctl.sh"
 cp scripts/mdctl.sh "$REL_DIR/mdctl.sh"
+cp scripts/panel-install-singbox.sh "$REL_DIR/singdns-panel-install-singbox.sh"
+cp scripts/panel-enable-ip-forward.sh "$REL_DIR/singdns-panel-enable-ip-forward.sh"
+cp scripts/panel-install-mosdns.sh "$REL_DIR/singdns-panel-install-mosdns.sh"
+cp scripts/panel-install-mosdns-upload.sh "$REL_DIR/singdns-panel-install-mosdns-upload.sh"
 cp deploy/sudoers.singdns-panel "$REL_DIR/sudoers.singdns-panel"
 printf '%s\n' "$VERSION" > "$REL_DIR/VERSION"
 
@@ -94,6 +98,10 @@ useradd -r -s /usr/sbin/nologin -d "$BASE_DIR" "$RUN_USER" 2>/dev/null || true
 
 install -m 755 sbctl.sh /usr/local/bin/sbctl.sh
 install -m 755 mdctl.sh /usr/local/bin/mdctl.sh
+install -m 755 singdns-panel-install-singbox.sh /usr/local/bin/singdns-panel-install-singbox.sh
+install -m 755 singdns-panel-enable-ip-forward.sh /usr/local/bin/singdns-panel-enable-ip-forward.sh
+install -m 755 singdns-panel-install-mosdns.sh /usr/local/bin/singdns-panel-install-mosdns.sh
+install -m 755 singdns-panel-install-mosdns-upload.sh /usr/local/bin/singdns-panel-install-mosdns-upload.sh
 mkdir -p /etc/sudoers.d
 cp sudoers.singdns-panel "$SUDOERS_FILE"
 chmod 440 "$SUDOERS_FILE"
@@ -187,6 +195,10 @@ trap 'rollback' ERR
 
 install -m 755 sbctl.sh /usr/local/bin/sbctl.sh
 install -m 755 mdctl.sh /usr/local/bin/mdctl.sh
+install -m 755 singdns-panel-install-singbox.sh /usr/local/bin/singdns-panel-install-singbox.sh
+install -m 755 singdns-panel-enable-ip-forward.sh /usr/local/bin/singdns-panel-enable-ip-forward.sh
+install -m 755 singdns-panel-install-mosdns.sh /usr/local/bin/singdns-panel-install-mosdns.sh
+install -m 755 singdns-panel-install-mosdns-upload.sh /usr/local/bin/singdns-panel-install-mosdns-upload.sh
 mkdir -p /etc/sudoers.d
 cp sudoers.singdns-panel "$SUDOERS_FILE"
 chmod 440 "$SUDOERS_FILE"

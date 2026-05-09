@@ -28,6 +28,10 @@ mkdir -p "$APP_DIR/logs"
 
 install -m 755 "$APP_DIR/scripts/sbctl.sh" /usr/local/bin/sbctl.sh
 install -m 755 "$APP_DIR/scripts/mdctl.sh" /usr/local/bin/mdctl.sh
+install -m 755 "$APP_DIR/scripts/panel-install-singbox.sh" /usr/local/bin/singdns-panel-install-singbox.sh
+install -m 755 "$APP_DIR/scripts/panel-enable-ip-forward.sh" /usr/local/bin/singdns-panel-enable-ip-forward.sh
+install -m 755 "$APP_DIR/scripts/panel-install-mosdns.sh" /usr/local/bin/singdns-panel-install-mosdns.sh
+install -m 755 "$APP_DIR/scripts/panel-install-mosdns-upload.sh" /usr/local/bin/singdns-panel-install-mosdns-upload.sh
 mkdir -p /etc/sudoers.d
 
 cd "$APP_DIR"
