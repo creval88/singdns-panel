@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,5 +100,26 @@ func TestManualNodesDraftSaveAndRead(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(tmp, "manual-nodes.txt")); err != nil {
 		t.Fatalf("expected draft file exists: %v", err)
+	}
+}
+
+func TestReadLastManualNodesImportResultFallsBackToLegacyPath(t *testing.T) {
+	tmp := t.TempDir()
+	s := &SingBoxService{cfg: cfgpkg.ServiceConfig{ConfigPath: filepath.Join(tmp, "config.json")}}
+
+	payload, err := json.Marshal(&ManualNodesImportResult{Total: 1, Success: 1, Message: "ok"})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if err := os.WriteFile(s.legacyManualNodesLastResultPath(), payload, 0644); err != nil {
+		t.Fatalf("write legacy payload: %v", err)
+	}
+
+	got, err := s.ReadLastManualNodesImportResult()
+	if err != nil {
+		t.Fatalf("ReadLastManualNodesImportResult err: %v", err)
+	}
+	if got == nil || got.Total != 1 || got.Success != 1 || got.Message != "ok" {
+		t.Fatalf("unexpected result: %#v", got)
 	}
 }

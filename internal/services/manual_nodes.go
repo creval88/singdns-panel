@@ -38,11 +38,19 @@ func (s *SingBoxService) manualNodesBaseDir() string {
 	return baseDir
 }
 
+func (s *SingBoxService) managedStateDir() string {
+	return filepath.Join(s.manualNodesBaseDir(), ".singdns-panel")
+}
+
 func (s *SingBoxService) manualNodesPath() string {
 	return filepath.Join(s.manualNodesBaseDir(), "manual-nodes.txt")
 }
 
 func (s *SingBoxService) manualNodesLastResultPath() string {
+	return filepath.Join(s.managedStateDir(), "manual-nodes-last-import.json")
+}
+
+func (s *SingBoxService) legacyManualNodesLastResultPath() string {
 	return filepath.Join(s.manualNodesBaseDir(), "manual-nodes-last-import.json")
 }
 
@@ -74,18 +82,22 @@ func (s *SingBoxService) SaveManualNodesDraft(raw string) (*OperationResult, err
 }
 
 func (s *SingBoxService) ReadLastManualNodesImportResult() (*ManualNodesImportResult, error) {
-	b, err := os.ReadFile(s.manualNodesLastResultPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+	paths := []string{s.manualNodesLastResultPath(), s.legacyManualNodesLastResultPath()}
+	for _, path := range paths {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
 		}
-		return nil, err
+		var out ManualNodesImportResult
+		if err := json.Unmarshal(b, &out); err != nil {
+			return nil, err
+		}
+		return &out, nil
 	}
-	var out ManualNodesImportResult
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return nil, nil
 }
 
 func (s *SingBoxService) SaveLastManualNodesImportResult(result *ManualNodesImportResult) error {

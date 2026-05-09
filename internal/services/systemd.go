@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,26 @@ func (r ServiceActionResult) AuditText() string {
 type SystemdService struct{}
 
 func NewSystemdService() *SystemdService { return &SystemdService{} }
+
+func parseSystemdExecStartFields(catOutput string) []string {
+	var last []string
+	for _, line := range strings.Split(catOutput, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		cmdline := strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
+		if cmdline == "" {
+			continue
+		}
+		fields := strings.Fields(cmdline)
+		if len(fields) == 0 {
+			continue
+		}
+		last = fields
+	}
+	return last
+}
 
 func (s *SystemdService) Status(name string) (*ServiceStatus, error) {
 	res, err := utils.Run(5*time.Second, "systemctl", "show", name, "--no-page", "--property=ActiveState,SubState,UnitFileState,Description")
@@ -84,6 +105,49 @@ func (s *SystemdService) Logs(name string, lines int) (string, error) {
 		return res.Stdout + res.Stderr, err
 	}
 	return res.Stdout, nil
+}
+
+func (s *SystemdService) MainPID(name string) (int, error) {
+	res, err := utils.Run(5*time.Second, "systemctl", "show", name, "--no-page", "--property=MainPID")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(parts) != 2 || parts[0] != "MainPID" {
+			continue
+		}
+		pid, convErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if convErr != nil {
+			return 0, convErr
+		}
+		return pid, nil
+	}
+	return 0, fmt.Errorf("MainPID not found")
+}
+
+func (s *SystemdService) ExecStartBinary(name string) (string, error) {
+	res, err := utils.Run(5*time.Second, "systemctl", "cat", name)
+	if err != nil {
+		return "", err
+	}
+	fields := parseSystemdExecStartFields(res.Stdout)
+	if len(fields) > 0 {
+		return fields[0], nil
+	}
+	return "", fmt.Errorf("ExecStart not found")
+}
+
+func (s *SystemdService) ExecStartFields(name string) ([]string, error) {
+	res, err := utils.Run(5*time.Second, "systemctl", "cat", name)
+	if err != nil {
+		return nil, err
+	}
+	fields := parseSystemdExecStartFields(res.Stdout)
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("ExecStart not found")
+	}
+	return fields, nil
 }
 
 func systemActionText(action string) string {

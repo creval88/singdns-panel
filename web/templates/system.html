@@ -56,6 +56,7 @@
           <div class="actions">
             <button class="warn" onclick="upgradePanelRemote()">一键在线升级</button>
             <button class="ghost" onclick="checkPanelRelease()">检查更新</button>
+            <button class="ghost" onclick="panelUpgradePreflight('remote')">升级前检查</button>
             <button class="ghost" onclick="copyPanelDiagnostics()">复制诊断信息</button>
             <button class="ghost" onclick="upgradePanel()">执行本地包升级</button>
             <button class="warn" onclick="restartPanel()">重启面板服务</button>
@@ -74,6 +75,22 @@
           </div>
           <div class="divider"></div>
           <div class="section-note" id="install-note">Sing-box 按官方 install.sh 安装；MosDNS 按内置参考逻辑安装，不依赖外部临时脚本地址。</div>
+          <div class="divider" style="margin-top:12px;"></div>
+          <div class="card-title-row"><h3>内核路径统一</h3><span class="badge">Path</span></div>
+          <div class="status-list kv-list">
+            <div><b>面板配置</b><span id="singbox-configured-binary">{{if .InstallStatus.SingBox.ConfiguredBinary}}{{.InstallStatus.SingBox.ConfiguredBinary}}{{else}}-{{end}}</span></div>
+            <div><b>systemd 实际</b><span id="singbox-service-binary">{{if .InstallStatus.SingBox.ServiceBinary}}{{.InstallStatus.SingBox.ServiceBinary}}{{else}}-{{end}}</span></div>
+            <div><b>当前运行中</b><span id="singbox-running-binary">{{if .InstallStatus.SingBox.RunningBinary}}{{.InstallStatus.SingBox.RunningBinary}}{{else}}-{{end}}</span></div>
+          </div>
+          <div style="margin-top: 10px;">
+            <label class="field-label" for="singbox-switch-path">将服务切换到这个内核路径</label>
+            <input id="singbox-switch-path" value="{{if .InstallStatus.SingBox.ServiceBinary}}{{.InstallStatus.SingBox.ServiceBinary}}{{else if .InstallStatus.SingBox.ConfiguredBinary}}{{.InstallStatus.SingBox.ConfiguredBinary}}{{end}}" placeholder="/usr/bin/sing-box 或 /usr/local/bin/sing-box" style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid #334; background:#1e293b; color:#e5eefc;">
+          </div>
+          <div class="actions" style="margin-top:8px; flex-wrap:wrap;">
+            <button class="ghost" onclick="switchSingboxBinary()">应用到服务</button>
+            <div id="singbox-binary-candidates" class="actions" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+          </div>
+          <div class="section-note" id="singbox-path-note" style="margin-top:6px;">如果你手动放了另一份 sing-box 内核，例如 `/usr/local/bin/sing-box` 的 R 核，可以在这里把 systemd 服务切过去，并同步面板配置。</div>
           <div class="actions" style="margin-top:10px; flex-wrap:wrap;">
             <button onclick="installSingbox()">安装 / 更新 Sing-box</button>
             <button class="ghost" onclick="enableIPForward()">开启 IP 转发</button>
@@ -259,7 +276,7 @@
           });
           const j = await r.json();
           setBusy(false);
-          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
+          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
           if (j && j.ok) { toast(j.message || 'Sing-box 离线安装成功', true); await refreshInstallStatus(); }
           else { toast((j && (j.error||j.message)) || '安装失败', false); showErrorDetail(JSON.stringify(j||{}, null, 2)); }
         } catch(e) {
@@ -285,7 +302,7 @@
           });
           const j = await r.json();
           setBusy(false);
-          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
+          try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
           if (j && j.ok) { toast(j.message || 'MosDNS 离线安装成功', true); await refreshInstallStatus(); }
           else { toast((j && (j.error||j.message)) || '安装失败', false); showErrorDetail(JSON.stringify(j||{}, null, 2)); }
         } catch(e) {
@@ -442,16 +459,19 @@
             const t = j.task || {};
             if (t.status === 'running' && t.message) {
               setBusy(true, t.message);
+              renderPanelTaskSteps(t);
             }
             if (t.status === 'success') {
+              renderPanelTaskSteps(t);
               toast(t.message || '升级成功！页面即将刷新...', true);
               setTimeout(() => window.location.reload(), 1200);
               setBusy(false);
               return true;
             }
             if (t.status === 'failed') {
+              renderPanelTaskSteps(t);
               toast('升级失败: ' + (t.error || t.message || 'unknown'), false);
-              showErrorDetail((t.error || t.message || 'unknown') + '\n任务ID: ' + taskId);
+              showErrorDetail(panelTaskDetailText(t, taskId));
               setBusy(false);
               return true;
             }
@@ -460,6 +480,59 @@
           }
         }
         return false;
+      }
+
+      function panelTaskDetailText(task, taskId) {
+        const lines = ['任务ID: ' + taskId, '状态: ' + (task.status || '-'), '消息: ' + (task.message || '-')];
+        const steps = Array.isArray(task.steps) ? task.steps : [];
+        if (steps.length) {
+          lines.push('', '阶段日志:');
+          steps.forEach(step => {
+            lines.push(`[${step.status || '-'}] ${step.time || '-'} · ${step.message || '-'}`);
+            if (step.detail) lines.push(String(step.detail));
+          });
+        }
+        if (task.error) lines.push('', '错误详情:', task.error);
+        return lines.join('\n');
+      }
+
+      function renderPanelTaskSteps(task) {
+        const note = document.getElementById('panel-upgrade-note');
+        if (!note || !task) return;
+        const steps = Array.isArray(task.steps) ? task.steps : [];
+        if (!steps.length) {
+          note.textContent = task.message || '升级任务运行中';
+          return;
+        }
+        const latest = steps.slice(-4).map(step => `${step.status || '-'} · ${step.message || '-'}`).join(' · ');
+        note.textContent = (task.message || '升级任务运行中') + ' · ' + latest;
+      }
+
+      function renderPanelPreflight(preflight) {
+        const note = document.getElementById('panel-upgrade-note');
+        if (!note || !preflight) return;
+        const checks = Array.isArray(preflight.checks) ? preflight.checks : [];
+        const detail = checks.map(c => {
+          const mark = c.ok ? 'OK' : (c.level === 'warn' ? 'WARN' : 'FAIL');
+          return `${mark} ${c.name}: ${c.message || '-'}`;
+        }).join(' · ');
+        note.textContent = (preflight.message || '升级前检查完成') + (detail ? ' · ' + detail : '');
+      }
+
+      async function panelUpgradePreflight(kind='local') {
+        const note = document.getElementById('panel-upgrade-note');
+        if (note) note.textContent = '正在执行升级前检查...';
+        try {
+          const r = await fetch('/api/panel/upgrade/preflight?kind=' + encodeURIComponent(kind), {cache:'no-store'});
+          const j = await r.json();
+          renderPanelPreflight(j.preflight);
+          toast(j.ok ? '升级前检查通过' : '升级前检查未通过', !!j.ok);
+          return j.preflight || null;
+        } catch (e) {
+          if (note) note.textContent = '升级前检查失败：' + e;
+          toast('升级前检查失败', false);
+          return null;
+        }
       }
 
       loadPanelUpdateConfig();
@@ -471,6 +544,8 @@
 
       async function upgradePanel() {
         if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
+        const preflight = await panelUpgradePreflight('local');
+        if (!preflight || !preflight.ok) return;
         setBusy(true, '正在触发本地升级任务...');
         const j = await request('/api/panel/upgrade', {
           method:'POST',
@@ -498,9 +573,9 @@
         const input = getPanelRemoteUpgradeURLInput();
         const url = input ? input.value.trim() : '';
         if (!url) {
-          const probe = await probePanelRemote(false);
-          if (!probe || !probe.package_ok) {
-            toast('更新源探测失败，请先修复配置再升级', false);
+          const preflight = await panelUpgradePreflight('remote');
+          if (!preflight || !preflight.ok) {
+            toast('远程升级前检查未通过，请先修复配置再升级', false);
             return;
           }
         }
@@ -550,15 +625,62 @@
           document.getElementById('install-singbox-status').textContent = (sb.installed ? '已安装' : '未安装') + (sb.version ? (' · ' + sb.version) : '');
           document.getElementById('install-mosdns-status').textContent = (md.installed ? '已安装' : '未安装') + (md.version ? (' · ' + md.version) : '');
           document.getElementById('install-ipforward-status').textContent = ipf.message || '未知';
+          document.getElementById('singbox-configured-binary').textContent = sb.configured_binary || '-';
+          document.getElementById('singbox-service-binary').textContent = sb.service_binary || '-';
+          document.getElementById('singbox-running-binary').textContent = sb.running_binary || '-';
+          const switchInput = document.getElementById('singbox-switch-path');
+          if (switchInput && (!document.activeElement || document.activeElement !== switchInput)) {
+            switchInput.value = sb.service_binary || sb.configured_binary || switchInput.value || '';
+          }
           const parts = [];
           if (sb.detail) parts.push('Sing-box: ' + sb.detail);
           if (md.detail) parts.push('MosDNS: ' + md.detail);
           if (ipf.message) parts.push('IP 转发: ' + ipf.message);
           const note = document.getElementById('install-note');
           if (note) note.textContent = parts.join(' · ') || '安装状态已刷新';
+          const pathNote = document.getElementById('singbox-path-note');
+          if (pathNote) {
+            pathNote.textContent = sb.path_consistent
+              ? '面板配置、systemd 与运行中的 sing-box 路径已经统一。后续通过面板上传或切换内核时，会沿用当前服务路径。'
+              : '当前检测到面板配置、systemd 或运行中的 sing-box 路径不一致。请从下面选择正确的内核路径并点击“应用到服务”。';
+          }
+          renderSingboxBinaryCandidates(sb.candidate_binaries || []);
         } catch (e) {
           console.log('refreshInstallStatus failed', e);
         }
+      }
+
+      function renderSingboxBinaryCandidates(paths) {
+        const wrap = document.getElementById('singbox-binary-candidates');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        (paths || []).forEach((path) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ghost';
+          btn.textContent = path;
+          btn.onclick = () => {
+            const input = document.getElementById('singbox-switch-path');
+            if (input) input.value = path;
+          };
+          wrap.appendChild(btn);
+        });
+      }
+
+      async function switchSingboxBinary() {
+        const input = document.getElementById('singbox-switch-path');
+        const path = input ? input.value.trim() : '';
+        if (!path) {
+          toast('请先填写要切换到的 sing-box 路径', false);
+          return;
+        }
+        if (!confirm('这会修改 sing-box 的 systemd 启动路径并重启服务。\n\n目标路径: ' + path + '\n\n确认继续？')) return;
+        const j = await request('/api/system/install/singbox/switch-binary', {
+          method:'POST',
+          body: JSON.stringify({ path }),
+          busyText:'正在切换 sing-box 服务路径...'
+        });
+        if (j && j.ok) await refreshInstallStatus();
       }
 
       async function installSingbox() {
@@ -568,7 +690,7 @@
           body: JSON.stringify({ enable_ip_forward: true }),
           busyText:'正在安装 Sing-box，可能需要几分钟...'
         });
-        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
+        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
         if (j && j.ok) await refreshInstallStatus();
       }
 
@@ -579,7 +701,7 @@
           body: JSON.stringify({}),
           busyText:'正在安装 MosDNS，可能需要几分钟...'
         });
-        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){ }
+        try { if (j && j.steps) renderInstallSteps(j.steps); } catch(_){}
         if (j && j.ok) await refreshInstallStatus();
       }
 

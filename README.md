@@ -47,6 +47,14 @@ go run ./cmd/server
 
 默认监听 `:9999`。
 
+## 前端资源约定
+面板最终打包使用的是 `internal/webassets/`。`web/` 只是镜像目录，修改页面时请先改 `internal/webassets/`，再检查或同步镜像：
+
+```bash
+bash scripts/check-webassets-parity.sh
+bash scripts/check-webassets-parity.sh --sync
+```
+
 ## Debian 部署
 看：`deploy/DEPLOY.md`
 

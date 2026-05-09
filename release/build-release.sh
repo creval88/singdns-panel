@@ -99,18 +99,20 @@ cp sudoers.singdns-panel "$SUDOERS_FILE"
 chmod 440 "$SUDOERS_FILE"
 visudo -c
 
-cp -n panel.json "$APP_DIR/configs/panel.json"
-cp singdns-panel.service "$SERVICE_FILE"
-if [[ -f "$APP_DIR/configs/panel.json" ]]; then
-  chown "$RUN_USER:$RUN_USER" "$APP_DIR/configs/panel.json" 2>/dev/null || true
-  chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
-fi
-
 if [[ -f bin/singdns-panel ]]; then
   install -m 755 bin/singdns-panel "$BIN_PATH"
 else
   echo "缺少预编译二进制 bin/singdns-panel，安装失败"
   exit 1
+fi
+
+if [[ ! -f "$APP_DIR/configs/panel.json" ]]; then
+  "$BIN_PATH" init-config "$APP_DIR/configs/panel.json"
+fi
+cp singdns-panel.service "$SERVICE_FILE"
+if [[ -f "$APP_DIR/configs/panel.json" ]]; then
+  chown "$RUN_USER:$RUN_USER" "$APP_DIR/configs/panel.json" 2>/dev/null || true
+  chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
 fi
 
 # 订阅日志文件（统一落盘到 /etc/sing-box，避免页面无记录）

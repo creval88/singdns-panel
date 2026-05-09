@@ -1,12 +1,23 @@
 package config
 
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"strings"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+const defaultPasswordHash = "$2a$10$mhgzMC./.jG65Pw8OhUo1Ocmw9UrwsatLMrk7Ii95Ag0DcCKcR1/a"
+
 const DefaultConfigTemplate = `{
   "listen": ":9999",
   "session_key": "change-me",
   "audit_log": "logs/audit.log",
   "auth": {
     "username": "admin",
-    "password_hash": "$2a$10$mhgzMC./.jG65Pw8OhUo1Ocmw9UrwsatLMrk7Ii95Ag0DcCKcR1/a"
+    "password_hash": "` + defaultPasswordHash + `"
   },
   "panel_update": {
     "release_dir": "/opt/singdns-panel/updates",
@@ -48,3 +59,35 @@ const DefaultConfigTemplate = `{
     }
   }
 }`
+
+type InitialConfig struct {
+	Content  string
+	Username string
+	Password string
+}
+
+func GenerateInitialConfig() (*InitialConfig, error) {
+	sessionKey, err := randomToken(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate session key: %w", err)
+	}
+	password, err := randomToken(18)
+	if err != nil {
+		return nil, fmt.Errorf("generate initial password: %w", err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("hash initial password: %w", err)
+	}
+	content := strings.Replace(DefaultConfigTemplate, `"session_key": "change-me"`, fmt.Sprintf(`"session_key": "%s"`, sessionKey), 1)
+	content = strings.Replace(content, defaultPasswordHash, string(hash), 1)
+	return &InitialConfig{Content: content, Username: "admin", Password: password}, nil
+}
+
+func randomToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}

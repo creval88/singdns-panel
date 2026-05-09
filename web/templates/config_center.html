@@ -1,77 +1,201 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/static/app.css"></head><body><div class="layout">{{template "sidebar" .}}<main class="content">{{template "page_header" .}}
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/static/app.css?v=20260421-config-center-v20"></head><body><div class="layout">{{template "sidebar" .}}<main class="content">{{template "page_header" .}}
 
-<div class="actions toolbar-slim">
-  <button type="button" onclick="configCenterReloadDraft()">从当前配置加载</button>
-  <button type="button" class="ghost" onclick="configCenterValidateDraft()">校验草稿</button>
-  <button type="button" onclick="configCenterSaveDraft()">保存到 sing-box 配置</button>
-</div>
-
-<div class="stats-grid">
-  <section class="stat-card stat-card-uniform">
-    <div class="stat-label">Outbounds</div>
-    <div id="cc-stat-outbounds" class="stat-value">{{if .Overview}}{{.Overview.Counts.Outbounds}}{{else}}0{{end}}</div>
-    <div class="stat-sub muted">结构化提取到的出口对象</div>
-  </section>
-  <section class="stat-card stat-card-uniform">
-    <div class="stat-label">Rule Sets</div>
-    <div id="cc-stat-rulesets" class="stat-value">{{if .Overview}}{{.Overview.Counts.RuleSets}}{{else}}0{{end}}</div>
-    <div class="stat-sub muted">route.rule_set 中的规则集</div>
-  </section>
-  <section class="stat-card stat-card-uniform">
-    <div class="stat-label">Route Rules</div>
-    <div id="cc-stat-routes" class="stat-value">{{if .Overview}}{{.Overview.Counts.RouteRules}}{{else}}0{{end}}</div>
-    <div class="stat-sub muted">当前路由规则条目</div>
-  </section>
-  <section class="stat-card stat-card-uniform {{if not .Validation.CanApply}}alert{{end}}">
-    <div class="stat-label">Validation</div>
-    <div id="cc-stat-apply" class="stat-value">{{if .Validation.CanApply}}可应用{{else}}需修复{{end}}</div>
-    <div id="cc-stat-validation" class="stat-sub {{if .Validation.CanApply}}ok{{else}}bad{{end}}">{{len .Validation.Errors}} errors / {{len .Validation.Warnings}} warnings</div>
-  </section>
-</div>
-
-<div class="grid two">
-  <section class="card">
-    <div class="card-title-row"><h3>概览</h3><span class="badge">Editable v2</span></div>
-    <div class="status-list kv-list">
-      <div><b>更新时间</b><span>{{if .Overview}}{{or .Overview.UpdatedAt "未知"}}{{else}}未知{{end}}</span></div>
-      <div><b>配置大小</b><span>{{if .Overview}}{{.Overview.ConfigBytes}}{{else}}0{{end}} bytes</span></div>
-      <div><b>保存策略</b><span>只替换 outbounds / route.rule_set / route.rules，其余字段保持原样</span></div>
+<section class="card cc-toolbar-card">
+  <div class="card-title-row"><h3>配置中心</h3><span class="badge">Readable Editor</span></div>
+  <div class="actions toolbar-slim">
+    <button type="button" class="ghost" onclick="configCenterReloadDraft()">从当前配置加载</button>
+    <button type="button" class="ghost" onclick="configCenterValidateDraft()">校验草稿</button>
+    <button type="button" class="cc-btn-primary" onclick="configCenterSaveDraft()">保存到 sing-box 配置</button>
+  </div>
+  <div class="cc-toolbar-grid">
+    <div class="cc-toolbar-note">结构化编辑已经按模块折叠展示；这里再把说明、状态和扩展信息做成按需显示，减少一次看到的内容量。</div>
+    <div class="cc-view-switches">
+      <label class="cc-toggle"><input id="cc-mode-compact" type="checkbox" checked onchange="ccSetMode('compact', this.checked)"><span>紧凑卡片</span></label>
+      <label class="cc-toggle"><input id="cc-mode-help" type="checkbox" onchange="ccSetMode('showHelp', this.checked)"><span>显示说明</span></label>
+      <label class="cc-toggle"><input id="cc-mode-focus" type="checkbox" onchange="ccSetMode('focus', this.checked)"><span>专注编辑</span></label>
     </div>
-    <div class="divider"></div>
-    <div class="section-note">现在这版已经支持对象化编辑。底层仍保留 JSON 同步层，方便调试和兜底。</div>
-  </section>
-
-  <section class="card">
-    <div class="card-title-row"><h3>校验结果</h3><span class="badge">Validate</span></div>
-    <div id="config-center-validation" class="status-list">
-      {{if .Validation.Errors}}
-        {{range .Validation.Errors}}<div class="bad">• {{.}}</div>{{end}}
-      {{else}}<div class="ok">• 未发现结构化引用错误</div>{{end}}
-      {{if .Validation.Warnings}}
-        <div class="divider"></div>
-        {{range .Validation.Warnings}}<div class="warn-text">• {{.}}</div>{{end}}
-      {{end}}
-    </div>
-  </section>
-</div>
+  </div>
+  <div id="cc-guardrail-note" class="cc-guardrail-note muted">批量修改、删除和顺序保存前会先提示影响范围。</div>
+</section>
 
 <section class="card">
-  <div class="card-title-row"><h3>Rule Sets</h3><div class="actions toolbar-slim"><button type="button" onclick="ccAddRuleSet()">新增 Rule Set</button></div></div>
+  <div class="card-title-row"><h3>定位与筛选</h3><span class="badge">Search + Filter</span></div>
+  <div class="cc-filter-grid">
+    <label><span class="field-label">搜索关键字</span><input id="cc-search" placeholder="搜 tag / type / 域名 / rule_set / outbound..." oninput="ccSetFilter('query', this.value)"></label>
+    <label><span class="field-label">范围</span><select id="cc-scope" onchange="ccSetFilter('scope', this.value)"><option value="all">全部模块</option><option value="rulesets">只看 Rule Sets</option><option value="outbounds">只看 Outbounds</option><option value="routes">只看 Route Rules</option></select></label>
+    <label><span class="field-label">问题筛选</span><select id="cc-issue-filter" onchange="ccSetFilter('issue', this.value)"><option value="all">全部条目</option><option value="incomplete">只看待补全</option><option value="unnamed">只看未命名</option><option value="unused">只看未引用</option></select></label>
+  </div>
+  <div class="cc-filter-footer">
+    <div id="cc-filter-summary" class="cc-filter-summary muted">当前显示全部条目</div>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccResetFilters()">清空筛选</button>
+  </div>
+</section>
+
+<section class="card cc-status-shell" id="cc-status-shell">
+  <div class="card-title-row"><h3>当前摘要</h3><span class="badge">Digest</span></div>
+  <div class="cc-summary-strip">
+    <div class="cc-summary-pill">
+      <span class="cc-summary-label">Outbounds</span>
+      <strong id="cc-stat-outbounds">{{if .Overview}}{{.Overview.Counts.Outbounds}}{{else}}0{{end}}</strong>
+    </div>
+    <div class="cc-summary-pill">
+      <span class="cc-summary-label">Rule Sets</span>
+      <strong id="cc-stat-rulesets">{{if .Overview}}{{.Overview.Counts.RuleSets}}{{else}}0{{end}}</strong>
+    </div>
+    <div class="cc-summary-pill">
+      <span class="cc-summary-label">Route Rules</span>
+      <strong id="cc-stat-routes">{{if .Overview}}{{.Overview.Counts.RouteRules}}{{else}}0{{end}}</strong>
+    </div>
+    <div class="cc-summary-pill {{if not .Validation.CanApply}}is-alert{{end}}">
+      <span class="cc-summary-label">Validation</span>
+      <strong id="cc-stat-apply">{{if .Validation.CanApply}}可应用{{else}}需修复{{end}}</strong>
+      <span id="cc-stat-validation" class="cc-summary-meta {{if .Validation.CanApply}}ok{{else}}bad{{end}}">{{len .Validation.Errors}} errors / {{len .Validation.Warnings}} warnings</span>
+    </div>
+  </div>
+  <details class="cc-dashboard-details" id="cc-section-dashboard" ontoggle="ccRememberSection('dashboard', this.open)">
+    <summary>展开详细状态、优化建议和校验结果</summary>
+    <div class="grid two cc-overview-grid">
+      <section class="cc-inline-panel">
+        <div class="card-title-row"><h3>概览</h3><span class="badge">Editable v3</span></div>
+        <div class="status-list kv-list">
+          <div><b>更新时间</b><span>{{if .Overview}}{{or .Overview.UpdatedAt "未知"}}{{else}}未知{{end}}</span></div>
+          <div><b>配置大小</b><span>{{if .Overview}}{{.Overview.ConfigBytes}}{{else}}0{{end}} bytes</span></div>
+          <div><b>保存策略</b><span>只替换 `outbounds` / `route.rule_set` / `route.rules`，其余字段保持原样</span></div>
+          <div><b>推荐编辑方式</b><span>先按模块改，再校验，最后统一保存；大量批量改动再用下面的 Raw JSON 逃生口。</span></div>
+        </div>
+      </section>
+
+      <section class="cc-inline-panel">
+        <div class="card-title-row"><h3>优化建议</h3><span class="badge">Hints</span></div>
+        <div id="cc-optimization-list" class="status-list">
+          <div class="muted">正在分析当前草稿...</div>
+        </div>
+      </section>
+    </div>
+
+    <section class="cc-inline-panel cc-validation-panel">
+      <div class="card-title-row"><h3>校验结果</h3><span class="badge">Validate</span></div>
+      <div id="config-center-validation" class="status-list">
+        {{if .Validation.Errors}}
+          {{range .Validation.Errors}}<div class="bad">• {{.}}</div>{{end}}
+        {{else}}<div class="ok">• 未发现结构化引用错误</div>{{end}}
+        {{if .Validation.Warnings}}
+          <div class="divider"></div>
+          {{range .Validation.Warnings}}<div class="warn-text">• {{.}}</div>{{end}}
+        {{end}}
+      </div>
+    </section>
+  </details>
+</section>
+
+<details class="card cc-section-card" id="cc-section-rulesets" open ontoggle="ccRememberSection('rulesets', this.open)">
+  <summary>
+    <div>
+      <div class="cc-section-title">Rule Sets</div>
+      <div class="cc-section-subtitle">管理远程规则集下载源，通常用于 `geosite` / `geoip` / 自定义远程列表。</div>
+    </div>
+    <span class="badge" id="cc-section-count-rulesets">{{if .Draft}}{{len .Draft.RuleSets}}{{else}}0{{end}}</span>
+  </summary>
+  <div class="cc-section-actions">
+    <button type="button" class="cc-btn-primary" onclick="ccAddRuleSet()">新增 Rule Set</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccAddRuleSetPreset('remote')">远程预设</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccAddRuleSetPreset('local')">本地预设</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccToggleAllCards('rulesets', true)">展开全部</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccToggleAllCards('rulesets', false)">收起全部</button>
+  </div>
+  <details class="cc-batch-tools">
+    <summary>批量工具</summary>
+    <div class="cc-batch-grid">
+      <label><span class="field-label">给当前筛选结果补前缀</span><input id="cc-batch-rulesets-prefix" placeholder="例如 geo-" oninput="ccSetBatchValue('rulesetsPrefix', this.value)"></label>
+      <button type="button" class="ghost cc-btn-inline" onclick="ccApplyTagPrefix('rulesets', ccUI.batch.rulesetsPrefix)">应用到当前筛选</button>
+    </div>
+    <div class="cc-batch-grid cc-batch-grid-split">
+      <label><span class="field-label">批量替换标签文本</span><input id="cc-batch-rulesets-find" placeholder="查找文本" oninput="ccSetBatchValue('rulesetsReplaceFrom', this.value)"></label>
+      <label><span class="field-label">替换成</span><input id="cc-batch-rulesets-replace" placeholder="替换文本" oninput="ccSetBatchValue('rulesetsReplaceTo', this.value)"></label>
+      <button type="button" class="ghost cc-btn-inline" onclick="ccApplyTagReplace('rulesets', ccUI.batch.rulesetsReplaceFrom, ccUI.batch.rulesetsReplaceTo)">替换当前筛选</button>
+    </div>
+    <div class="cc-batch-note muted">只作用于当前筛选结果中的已命名 rule_set。</div>
+  </details>
   <div id="cc-rulesets-list" class="object-list"></div>
-</section>
+</details>
 
-<section class="card">
-  <div class="card-title-row"><h3>Outbounds</h3><div class="actions toolbar-slim"><button type="button" onclick="ccAddOutbound()">新增 Outbound</button></div></div>
+<details class="card cc-section-card" id="cc-section-outbounds" open ontoggle="ccRememberSection('outbounds', this.open)">
+  <summary>
+    <div>
+      <div class="cc-section-title">Outbounds</div>
+      <div class="cc-section-subtitle">编辑节点组和出口策略，适合维护 `selector` / `urltest` / `direct` 等基础结构。</div>
+    </div>
+    <span class="badge" id="cc-section-count-outbounds">{{if .Draft}}{{len .Draft.Outbounds}}{{else}}0{{end}}</span>
+  </summary>
+  <div class="cc-section-actions">
+    <button type="button" class="cc-btn-primary" onclick="ccAddOutbound()">新增 Outbound</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccAddOutboundPreset('selector')">Selector</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccAddOutboundPreset('urltest')">URLTest</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccAddOutboundPreset('direct')">Direct</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccToggleAllCards('outbounds', true)">展开全部</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccToggleAllCards('outbounds', false)">收起全部</button>
+  </div>
+  <section class="cc-common-panel">
+    <div class="card-title-row"><h3>常用分组快捷配置</h3><span class="badge">Hot Groups</span></div>
+    <div class="cc-common-panel-note muted">把 `自动选择 / 香日新自动 / 香港手动 / 自建节点 / 手动选择 / 默认代理 / 漏网之鱼` 单独拎出来，方便直接改最常用字段；缺失时也能一键创建。</div>
+    <div id="cc-common-outbounds" class="cc-common-grid"></div>
+  </section>
+  <details class="cc-batch-tools">
+    <summary>批量工具</summary>
+    <div class="cc-batch-grid">
+      <label><span class="field-label">给当前筛选结果补前缀</span><input id="cc-batch-outbounds-prefix" placeholder="例如 auto-" oninput="ccSetBatchValue('outboundsPrefix', this.value)"></label>
+      <button type="button" class="ghost cc-btn-inline" onclick="ccApplyTagPrefix('outbounds', ccUI.batch.outboundsPrefix)">应用到当前筛选</button>
+    </div>
+    <div class="cc-batch-grid cc-batch-grid-split">
+      <label><span class="field-label">批量替换标签文本</span><input id="cc-batch-outbounds-find" placeholder="查找文本" oninput="ccSetBatchValue('outboundsReplaceFrom', this.value)"></label>
+      <label><span class="field-label">替换成</span><input id="cc-batch-outbounds-replace" placeholder="替换文本" oninput="ccSetBatchValue('outboundsReplaceTo', this.value)"></label>
+      <button type="button" class="ghost cc-btn-inline" onclick="ccApplyTagReplace('outbounds', ccUI.batch.outboundsReplaceFrom, ccUI.batch.outboundsReplaceTo)">替换当前筛选</button>
+    </div>
+    <div class="cc-batch-note muted">只作用于当前筛选结果中的已命名 outbound。</div>
+  </details>
   <div id="cc-outbounds-list" class="object-list"></div>
-</section>
+</details>
 
-<section class="card">
-  <div class="card-title-row"><h3>Route Rules</h3><div class="actions toolbar-slim"><button type="button" onclick="ccAddRouteRule()">新增 Route Rule</button></div></div>
+<details class="card cc-section-card" id="cc-section-routes" open ontoggle="ccRememberSection('routes', this.open)">
+  <summary>
+    <div>
+      <div class="cc-section-title">Route Rules</div>
+      <div class="cc-section-subtitle">按条件把流量导向不同出口。顺序很重要，越靠前的规则越先命中。</div>
+    </div>
+    <span class="badge" id="cc-section-count-routes">{{if .Draft}}{{len .Draft.RouteRules}}{{else}}0{{end}}</span>
+  </summary>
+  <div class="cc-section-actions">
+    <button type="button" class="cc-btn-primary" onclick="ccAddRouteRule()">新增 Route Rule</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccAddRouteRulePreset('direct')">直连预设</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccAddRouteRulePreset('proxy')">代理预设</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccToggleAllCards('routes', true)">展开全部</button>
+    <button type="button" class="ghost cc-btn-inline" onclick="ccToggleAllCards('routes', false)">收起全部</button>
+  </div>
+  <details class="cc-batch-tools">
+    <summary>批量工具</summary>
+    <div class="cc-batch-grid">
+      <label><span class="field-label">给当前筛选结果统一设置 Outbound</span><input id="cc-batch-routes-outbound" list="cc-outbound-tags" placeholder="选择或输入 outbound tag" oninput="ccSetBatchValue('routesOutbound', this.value)"></label>
+      <button type="button" class="ghost cc-btn-inline" onclick="ccApplyRoutesOutbound(ccUI.batch.routesOutbound)">应用到当前筛选</button>
+    </div>
+    <div class="cc-batch-grid cc-batch-grid-split">
+      <label><span class="field-label">批量插入预设</span><input id="cc-batch-routes-count" type="number" min="1" max="20" value="3" oninput="ccSetBatchValue('routesInsertCount', this.value)"></label>
+      <button type="button" class="ghost cc-btn-inline" onclick="ccInsertRouteRulePresetBatch('direct', ccUI.batch.routesInsertCount)">插入直连预设</button>
+      <button type="button" class="ghost cc-btn-inline" onclick="ccInsertRouteRulePresetBatch('proxy', ccUI.batch.routesInsertCount)">插入代理预设</button>
+    </div>
+    <div class="cc-batch-note muted">只修改没有 `action` 的 route rule，避免把已有动作规则批量覆盖乱掉。</div>
+  </details>
+  <div id="cc-route-order-summary" class="cc-route-order-summary muted">当前顺序与加载时一致</div>
   <div id="cc-routes-list" class="object-list"></div>
-</section>
+</details>
 
-<details class="card">
-  <summary><b>Raw JSON 逃生口</b> <span class="muted">需要时可直接改底层 JSON</span></summary>
+<details class="card cc-section-card" id="cc-section-raw" ontoggle="ccRememberSection('raw', this.open)">
+  <summary>
+    <div>
+      <div class="cc-section-title">Raw JSON 逃生口</div>
+      <div class="cc-section-subtitle">当批量改动太多或结构化表单还没覆盖到某个字段时，可直接编辑底层 JSON。</div>
+    </div>
+    <span class="badge">Raw</span>
+  </summary>
   <div class="grid two" style="margin-top:16px">
     <section>
       <div class="card-title-row"><h3>Rule Sets JSON</h3><span class="badge" id="cc-badge-rulesets">{{if .Draft}}{{len .Draft.RuleSets}}{{else}}0{{end}}</span></div>
@@ -88,17 +212,1085 @@
   </section>
 </details>
 
+<div id="cc-datalists" style="display:none"></div>
+
 <script src="/static/app.js"></script>
 <script>
 const ccInitialDraft = {{.Draft | toJSON}};
+const ccInitialRouteOrder = ((ccInitialDraft && Array.isArray(ccInitialDraft.route_rules)) ? ccInitialDraft.route_rules : []).map((item, index) => String(item?.id || item?.summary || item?.outbound || item?.action || `route-${index}`));
 let ccState = {draft: ccInitialDraft || {version:1, source:'config', rule_sets:[], outbounds:[], route_rules:[]}};
+const ccUI = {
+  sections: { dashboard: false, rulesets: true, outbounds: true, routes: true, raw: false },
+  cards: {},
+  filters: { query: '', scope: 'all', issue: 'all' },
+  modes: { compact: true, showHelp: false, focus: false },
+  batch: {
+    rulesetsPrefix: '', rulesetsReplaceFrom: '', rulesetsReplaceTo: '',
+    outboundsPrefix: '', outboundsReplaceFrom: '', outboundsReplaceTo: '',
+    routesOutbound: '', routesInsertCount: '3'
+  },
+  dragRouteIndex: null
+};
+
+const ccHelp = {
+  ruleset: {
+    tag: '规则集的引用名。路由规则里通过这个名字引用它。',
+    type: '常见是 remote 或 local。remote 表示需要下载，local 表示读取本地文件。',
+    format: '告诉 sing-box 规则集的格式，例如 binary 或 source。',
+    source: '远程 URL 或本地文件路径。结构化草稿会统一落到 source。',
+    download_detour: '下载规则集时走哪个 outbound。适合避免规则集更新被默认出口影响。'
+  },
+  outbound: {
+    tag: '出口对象的唯一名字，路由规则和其他组都靠它引用。',
+    type: '例如 direct、block、selector、urltest。不同类型决定这个出口的行为。',
+    members: '组成员列表。selector/urltest 常用；direct/block 通常留空。',
+    filter_include: '当模板里需要按关键字挑节点时，包含这些关键字的节点才会进组。',
+    filter_exclude: '在包含条件基础上再排除关键字，避免某些地区或倍率节点进入。',
+    interval: 'urltest 探测间隔，例如 10m。只对 urltest 这类自动测速组有意义。',
+    tolerance: 'urltest 允许的延迟波动阈值，越大越不容易频繁切换。',
+    idle_timeout: '空闲多久后释放历史测速状态。适合控制状态保留时间。',
+    interrupt_exist_connections: '切换节点时是否中断已有连接。开启更激进，关闭更平滑。'
+  },
+  route: {
+    type: '规则类型留空即可；只有需要特殊路由动作时再填。',
+    outbound: '命中本条规则后流量要走的出口 tag。',
+    action: '某些 sing-box 规则支持 action/method；没有就留空。',
+    clash_mode: '适配 Clash API 模式切换，例如 rule / global / direct。',
+    rule_sets: '引用哪些 rule_set。适合 geosite/geoip 这类外部规则集命中。',
+    inbound: '限定从哪些入站进入的流量命中本条规则。',
+    domain: '精确域名匹配。',
+    domain_suffix: '按后缀匹配域名，例如 google.com。',
+    ip_cidr: 'CIDR 网段匹配，例如 1.1.1.0/24。',
+    network: '协议类型，例如 tcp / udp。',
+    port: '端口或端口范围，例如 53 或 8000:9000。',
+    ip_is_private: '是否匹配私有地址流量。常用于局域网直连规则。'
+  }
+};
+
+const ccCommonOutboundDefs = [
+  {
+    key: 'auto_choice',
+    title: '自动选择',
+    desc: '总入口自动测速组，通常承担大部分默认代理选择。',
+    keywords: ['自动选择'],
+    relatedKeys: ['manual_select', 'self_built'],
+    recommended: () => ({
+      tag: '♻️ 自动选择',
+      type: 'urltest',
+      members: ['{all}'],
+      filter_include: [],
+      filter_exclude: ['官网', '到期时间', '剩余', '流量', '套餐', '免费', '订阅', '全球直连', 'GB', 'Expire Date', 'Traffic', 'ExpireDate'],
+      interval: '10m',
+      tolerance: 100,
+      enabled: true
+    })
+  },
+  {
+    key: 'hkjp_auto',
+    title: '香日新自动',
+    desc: '给港日新节点做自动测速，常用于默认代理和地域优选。',
+    keywords: ['香日新自动'],
+    relatedKeys: ['hk_manual'],
+    recommended: () => ({
+      tag: '♻️ 香日新自动',
+      type: 'urltest',
+      members: ['{all}'],
+      filter_include: [],
+      filter_exclude: [],
+      interval: '1m',
+      tolerance: 30,
+      idle_timeout: '30m',
+      interrupt_exist_connections: false,
+      enabled: true
+    })
+  },
+  {
+    key: 'hk_manual',
+    title: '香港手动',
+    desc: '香港节点手选组，通常用于地区定向和故障切换。',
+    keywords: ['香港手动'],
+    relatedKeys: [],
+    recommended: () => ({
+      tag: '🇭🇰 香港手动',
+      type: 'selector',
+      members: ['{all}'],
+      filter_include: ['🇭🇰|HK|hk|香港|港|HongKong'],
+      filter_exclude: ['免费'],
+      enabled: true
+    })
+  },
+  {
+    key: 'self_built',
+    title: '自建节点',
+    desc: '把自建或 Reality 节点独立成组，方便手动优先使用。',
+    keywords: ['自建节点'],
+    relatedKeys: [],
+    recommended: () => ({
+      tag: '🚀 自建节点',
+      type: 'selector',
+      members: ['{all}'],
+      filter_include: ['Reality|reality'],
+      filter_exclude: ['免费'],
+      enabled: true
+    })
+  },
+  {
+    key: 'manual_select',
+    title: '手动选择',
+    desc: '通用手选组，通常作为默认代理和业务分流的兜底入口。',
+    keywords: ['手动选择'],
+    relatedKeys: ['self_built'],
+    quickMembers: () => uniquePreserve(['🚀 自建节点'].concat(ccSuggestedDefaultProxyMembers().filter((tag) => tag !== '♻️ 自动选择'))),
+    recommended: () => ({
+      tag: '🐸 手动选择',
+      type: 'selector',
+      members: [],
+      filter_include: [],
+      filter_exclude: ['网站', '流量', '地址', '剩余', '过期', '免费', '时间', '有效', 'Traffic', 'ExpireDate', 'GB', 'Expire Date'],
+      enabled: true
+    })
+  },
+  {
+    key: 'default_proxy',
+    title: '默认代理',
+    desc: '多数分流默认会先走这里，适合集中调优常用线路的顺序。',
+    keywords: ['默认代理'],
+    relatedKeys: ['hkjp_auto', 'hk_manual', 'self_built', 'manual_select', 'auto_choice'],
+    quickMembers: () => ccSuggestedDefaultProxyMembers(),
+    recommended: () => ({
+      tag: '🚀 默认代理',
+      type: 'selector',
+      members: ccSuggestedDefaultProxyMembers(),
+      filter_include: [],
+      filter_exclude: [],
+      enabled: true
+    })
+  },
+  {
+    key: 'fallback_proxy',
+    title: '漏网之鱼',
+    desc: '兜底流量最终会命中这里，建议保留代理、自建和直连三种选择。',
+    keywords: ['漏网之鱼'],
+    relatedKeys: ['default_proxy', 'self_built'],
+    quickMembers: () => ccSuggestedFallbackMembers(),
+    recommended: () => ({
+      tag: '🐠 漏网之鱼',
+      type: 'selector',
+      members: ccSuggestedFallbackMembers(),
+      filter_include: [],
+      filter_exclude: [],
+      enabled: true
+    })
+  }
+];
 
 function pretty(v){ return JSON.stringify(v || [], null, 2); }
 function setText(id, value){ const el = document.getElementById(id); if(el) el.value = pretty(value); }
 function setCount(id, value){ const el = document.getElementById(id); if(el) el.textContent = String(value ?? 0); }
-function splitList(v){ return String(v || '').split(',').map(x=>x.trim()).filter(Boolean); }
+function splitList(v){ return String(v || '').split(/[\n,，;；]+/).map(x=>x.trim()).filter(Boolean); }
 function joinList(v){ return Array.isArray(v) ? v.join(', ') : ''; }
 function esc(v){ return escapeHTML(v ?? ''); }
+function js(v){ return JSON.stringify(String(v ?? '')); }
+function boolSelectValue(v){ return v === true ? 'true' : (v === false ? 'false' : ''); }
+function uniqueSorted(values){
+  return Array.from(new Set((values || []).map(v => String(v || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+}
+function uniquePreserve(values){
+  const out = [];
+  const seen = new Set();
+  (values || []).forEach((value) => {
+    const v = String(value || '').trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  });
+  return out;
+}
+
+function ccField(label, help, control, extraClass){
+  return `<label class="${extraClass || ''}"><span class="field-label">${esc(label)}</span>${control}<div class="cc-help">${esc(help || '')}</div></label>`;
+}
+function ccFieldGroup(title, desc, body, extraClass, collapsed){
+  if (collapsed) {
+    return `
+      <details class="cc-field-group cc-field-group-fold ${extraClass || ''}">
+        <summary class="cc-field-group-head">
+          <div class="cc-field-group-title">${esc(title)}</div>
+          ${desc ? `<div class="cc-field-group-desc">${esc(desc)}</div>` : ''}
+        </summary>
+        <div class="object-grid two-col">${body}</div>
+      </details>
+    `;
+  }
+  return `
+    <section class="cc-field-group ${extraClass || ''}">
+      <div class="cc-field-group-head">
+        <div class="cc-field-group-title">${esc(title)}</div>
+        ${desc ? `<div class="cc-field-group-desc">${esc(desc)}</div>` : ''}
+      </div>
+      <div class="object-grid two-col">${body}</div>
+    </section>
+  `;
+}
+function ccTagEditor(label, help, values, section, index, key, datalistId, placeholder, extraClass){
+  const chips = uniquePreserve(values).map((value) => `
+    <span class="cc-tag-pill">
+      <span>${esc(value)}</span>
+      <button type="button" class="ghost cc-tag-remove" onclick="ccRemoveListValue(${js(section)}, ${index}, ${js(key)}, ${js(value)})">×</button>
+    </span>
+  `).join('');
+  const listAttr = datalistId ? ` list="${esc(datalistId)}"` : '';
+  const kindAttr = ` data-suggest-kind="${esc(datalistId || '')}"`;
+  const callArgs = `${js(section)}, ${index}, ${js(key)}, ${js(datalistId || '')}`;
+  return ccField(label, help, `
+    <div class="cc-tag-editor"${kindAttr}>
+      <div class="cc-tag-list">${chips || '<span class="muted">暂无条目</span>'}</div>
+        <div class="cc-tag-input-row">
+        <div class="cc-tag-input-wrap">
+          <input${listAttr} data-section="${esc(section)}" data-index="${index}" data-key="${esc(key)}" placeholder="${esc(placeholder || '输入后回车添加')}" autocomplete="off" onfocus="ccTagSuggest(this, ${callArgs})" oninput="ccTagSuggest(this, ${callArgs})" onkeydown="ccTagInputKeydown(event, this, ${callArgs})" onpaste="ccTagInputCommit(${js(section)}, ${index}, ${js(key)}, event, this, false, true)" onblur="ccTagInputBlur(event, this, ${callArgs})">
+          <div class="cc-tag-suggestions" hidden></div>
+        </div>
+        <button type="button" class="ghost" onclick="ccTagInputCommit(${js(section)}, ${index}, ${js(key)}, null, this.parentElement.querySelector('input'), true)">添加</button>
+      </div>
+      <div class="cc-tag-tip muted">支持批量粘贴；方向键选择联想项，回车即可补全。</div>
+    </div>
+  `, extraClass);
+}
+
+function ccSectionKey(name){ return `cc-section-${name}`; }
+function ccCardKey(section, index){ return `${section}:${index}`; }
+function ccRememberSection(name, open){ ccUI.sections[name] = !!open; }
+function ccRememberCard(section, index, open){ ccUI.cards[ccCardKey(section, index)] = !!open; }
+function ccSetMode(name, enabled){
+  ccUI.modes[name] = !!enabled;
+  ccApplyModes();
+}
+function ccApplyModes(){
+  document.body.classList.toggle('cc-compact-mode', !!ccUI.modes.compact);
+  document.body.classList.toggle('cc-help-mode', !!ccUI.modes.showHelp);
+  document.body.classList.toggle('cc-focus-mode', !!ccUI.modes.focus);
+  const compact = document.getElementById('cc-mode-compact');
+  const help = document.getElementById('cc-mode-help');
+  const focus = document.getElementById('cc-mode-focus');
+  if (compact) compact.checked = !!ccUI.modes.compact;
+  if (help) help.checked = !!ccUI.modes.showHelp;
+  if (focus) focus.checked = !!ccUI.modes.focus;
+}
+function ccIsCardOpen(section, index){
+  const key = ccCardKey(section, index);
+  if (Object.prototype.hasOwnProperty.call(ccUI.cards, key)) return !!ccUI.cards[key];
+  return index < 1;
+}
+function ccToggleAllCards(section, open){
+  const list = section === 'rulesets' ? ccState.draft.rule_sets : (section === 'outbounds' ? ccState.draft.outbounds : ccState.draft.route_rules);
+  for(let i = 0; i < list.length; i++) ccUI.cards[ccCardKey(section, i)] = !!open;
+  renderAll();
+}
+function ccApplySectionOpenState(){
+  Object.entries(ccUI.sections).forEach(([name, open]) => {
+    const el = document.getElementById(ccSectionKey(name));
+    if (el) el.open = !!open;
+  });
+}
+function ccSetFilter(key, value){
+  ccUI.filters[key] = String(value || '').trim();
+  renderAll();
+}
+function ccSetBatchValue(key, value){
+  ccUI.batch[key] = String(value || '');
+}
+function ccResetFilters(){
+  ccUI.filters = { query: '', scope: 'all', issue: 'all' };
+  const search = document.getElementById('cc-search');
+  const scope = document.getElementById('cc-scope');
+  const issue = document.getElementById('cc-issue-filter');
+  if (search) search.value = '';
+  if (scope) scope.value = 'all';
+  if (issue) issue.value = 'all';
+  renderAll();
+}
+function ccVisibleEntries(section){
+  return ccFilterEntries(section, ccSectionItems(section));
+}
+function ccSectionVisible(section){
+  return ccUI.filters.scope === 'all' || ccUI.filters.scope === section;
+}
+function ccApplySectionVisibility(){
+  ['rulesets', 'outbounds', 'routes'].forEach((section) => {
+    const el = document.getElementById(ccSectionKey(section));
+    if (el) el.style.display = ccSectionVisible(section) ? '' : 'none';
+  });
+}
+function ccSectionItems(section){
+  if (section === 'rulesets') return ccState.draft.rule_sets;
+  if (section === 'outbounds') return ccState.draft.outbounds;
+  return ccState.draft.route_rules;
+}
+function ccSectionLabel(section){
+  if (section === 'rulesets') return 'Rule Set';
+  if (section === 'outbounds') return 'Outbound';
+  return 'Route Rule';
+}
+function ccUpdateListValues(section, index, key, values){
+  const items = ccSectionItems(section);
+  if (!items[index]) return;
+  items[index][key] = uniquePreserve(values);
+  renderAll();
+}
+function ccApplyTagPrefix(section, rawPrefix){
+  const prefix = String(rawPrefix || '').trim();
+  if (!prefix) { toast('先输入要补的前缀', false); return; }
+  const entries = ccVisibleEntries(section);
+  if (!entries.length) { toast('当前筛选结果没有可处理的条目', false); return; }
+  if (!confirm(`准备给当前筛选结果中的 ${entries.length} 条${ccSectionLabel(section)}补前缀：${prefix}\n\n确认继续？`)) return;
+  let changed = 0;
+  entries.forEach(({ index }) => {
+    const item = ccSectionItems(section)[index];
+    const tag = String(item?.tag || '').trim();
+    if (!tag) return;
+    if (tag.startsWith(prefix)) return;
+    item.tag = `${prefix}${tag}`;
+    changed += 1;
+  });
+  if (!changed) { toast('当前筛选结果里没有需要补前缀的已命名条目'); return; }
+  renderAll();
+  toast(`已为 ${changed} 条${section === 'rulesets' ? ' rule_set' : ' outbound'}补上前缀`);
+}
+function ccApplyTagReplace(section, rawFrom, rawTo){
+  const from = String(rawFrom || '');
+  const to = String(rawTo || '');
+  if (!from) { toast('先输入要替换的文本', false); return; }
+  const entries = ccVisibleEntries(section);
+  if (!entries.length) { toast('当前筛选结果没有可处理的条目', false); return; }
+  if (!confirm(`准备在当前筛选结果中的 ${entries.length} 条${ccSectionLabel(section)}里，把「${from}」替换成「${to}」。\n\n确认继续？`)) return;
+  let changed = 0;
+  entries.forEach(({ index }) => {
+    const item = ccSectionItems(section)[index];
+    const tag = String(item?.tag || '');
+    if (!tag || !tag.includes(from)) return;
+    item.tag = tag.split(from).join(to);
+    changed += 1;
+  });
+  if (!changed) { toast('当前筛选结果里没有匹配到要替换的标签文本'); return; }
+  renderAll();
+  toast(`已更新 ${changed} 条${section === 'rulesets' ? ' rule_set' : ' outbound'}标签`);
+}
+function ccApplyRoutesOutbound(rawOutbound){
+  const outbound = String(rawOutbound || '').trim();
+  if (!outbound) { toast('先输入要批量设置的 outbound', false); return; }
+  const entries = ccVisibleEntries('routes');
+  if (!entries.length) { toast('当前筛选结果没有可处理的 route rule', false); return; }
+  if (!confirm(`准备把当前筛选结果中的 ${entries.length} 条 Route Rule 批量指向 outbound：${outbound}\n\n带 action 的规则会自动跳过。确认继续？`)) return;
+  let changed = 0;
+  let skipped = 0;
+  entries.forEach(({ index }) => {
+    const item = ccSectionItems('routes')[index];
+    if (String(item?.action || '').trim()) { skipped += 1; return; }
+    if (String(item?.outbound || '').trim() === outbound) return;
+    item.outbound = outbound;
+    changed += 1;
+  });
+  if (!changed) {
+    toast(skipped ? `当前筛选结果中 ${skipped} 条带 action 的规则已跳过，其余无需修改` : '当前筛选结果无需修改');
+    return;
+  }
+  renderAll();
+  toast(`已更新 ${changed} 条 route rule 的 outbound${skipped ? `，跳过 ${skipped} 条带 action 的规则` : ''}`);
+}
+function ccInsertRouteRulePresetBatch(kind, rawCount){
+  const count = Math.max(1, Math.min(20, Number(rawCount || 1) || 1));
+  const entries = ccVisibleEntries('routes');
+  const insertAt = entries.length ? entries[entries.length - 1].index + 1 : ccSectionItems('routes').length;
+  if (!confirm(`准备插入 ${count} 条${kind === 'direct' ? '直连' : '代理'}预设规则${entries.length ? '，位置在当前筛选结果末尾之后' : '，位置在规则列表末尾'}。\n\n确认继续？`)) return;
+  const items = Array.from({length: count}, () => ccRouteRuleTemplate(kind));
+  ccInsertSectionItems('routes', items, insertAt);
+  toast(`已插入 ${count} 条${kind === 'direct' ? '直连' : '代理'}预设规则`);
+}
+function ccAddListValues(section, index, key, raw){
+  const items = ccSectionItems(section);
+  if (!items[index]) return;
+  const current = Array.isArray(items[index][key]) ? items[index][key] : [];
+  ccUpdateListValues(section, index, key, current.concat(splitList(String(raw || '').replace(/\n/g, ','))));
+}
+function ccRemoveListValue(section, index, key, value){
+  const items = ccSectionItems(section);
+  if (!items[index]) return;
+  const current = Array.isArray(items[index][key]) ? items[index][key] : [];
+  ccUpdateListValues(section, index, key, current.filter(item => String(item) !== String(value)));
+}
+function ccTagInputCommit(section, index, key, event, input, force, fromPaste){
+  if (!input) return;
+  if (fromPaste && event && event.clipboardData) {
+    event.preventDefault();
+    ccAddListValues(section, index, key, event.clipboardData.getData('text'));
+    input.value = '';
+    return;
+  }
+  if (event && event.type === 'keydown' && !['Enter', ',', 'Tab'].includes(event.key)) return;
+  const raw = String(input.value || '').trim();
+  if (!raw && !force) return;
+  if (event) event.preventDefault();
+  if (raw) ccAddListValues(section, index, key, raw);
+  input.value = '';
+}
+function ccCollectTagFieldValues(section, key){
+  return uniqueSorted(ccSectionItems(section).flatMap((item) => Array.isArray(item?.[key]) ? item[key] : []));
+}
+function ccTagSuggestionValues(section, key, datalistId){
+  if (datalistId === 'cc-outbound-tags') return uniqueSorted((ccState.draft.outbounds || []).map(item => item?.tag));
+  if (datalistId === 'cc-ruleset-tags') return uniqueSorted((ccState.draft.rule_sets || []).map(item => item?.tag));
+  if (datalistId === 'cc-network-types') {
+    return uniqueSorted(['tcp', 'udp', ...(ccState.draft.route_rules || []).flatMap(item => Array.isArray(item?.network) ? item.network : [])]);
+  }
+  return ccCollectTagFieldValues(section, key);
+}
+function ccTagSuggestionBox(input){
+  const wrap = input ? input.closest('.cc-tag-input-wrap') : null;
+  return wrap ? wrap.querySelector('.cc-tag-suggestions') : null;
+}
+function ccHideTagSuggestions(input){
+  const box = ccTagSuggestionBox(input);
+  if (!box) return;
+  box.hidden = true;
+  box.innerHTML = '';
+  box.dataset.active = '-1';
+}
+function ccRenderTagSuggestions(input, values){
+  const box = ccTagSuggestionBox(input);
+  if (!box) return [];
+  if (!values.length) {
+    ccHideTagSuggestions(input);
+    return [];
+  }
+  box.hidden = false;
+  box.dataset.active = box.dataset.active || '0';
+  box.innerHTML = values.map((value, idx) => `
+    <button type="button" class="cc-tag-suggestion${idx === Number(box.dataset.active || 0) ? ' active' : ''}" data-value="${esc(value)}" onclick="ccTagSuggestionPick(this.parentElement.previousElementSibling, ${js(value)})">${esc(value)}</button>
+  `).join('');
+  return Array.from(box.querySelectorAll('.cc-tag-suggestion'));
+}
+function ccSetActiveTagSuggestion(input, nextIndex){
+  const box = ccTagSuggestionBox(input);
+  if (!box || box.hidden) return;
+  const items = Array.from(box.querySelectorAll('.cc-tag-suggestion'));
+  if (!items.length) return;
+  const active = Math.max(0, Math.min(nextIndex, items.length - 1));
+  box.dataset.active = String(active);
+  items.forEach((item, idx) => item.classList.toggle('active', idx === active));
+}
+function ccTagSuggest(input, section, index, key, datalistId){
+  if (!input) return;
+  const editor = input.closest('.cc-tag-editor');
+  const selected = editor ? Array.from(editor.querySelectorAll('.cc-tag-pill span:first-child')).map(node => node.textContent || '') : [];
+  const raw = String(input.value || '').trim().toLowerCase();
+  const values = ccTagSuggestionValues(section, key, datalistId)
+    .filter((value) => !selected.includes(value))
+    .filter((value) => !raw || value.toLowerCase().includes(raw))
+    .slice(0, 8);
+  const items = ccRenderTagSuggestions(input, values);
+  if (items.length) ccSetActiveTagSuggestion(input, 0);
+}
+function ccTagSuggestionPick(input, value){
+  if (!input) return;
+  input.value = String(value || '').trim();
+  const section = input.dataset.section;
+  const index = Number(input.dataset.index || 0);
+  const key = input.dataset.key;
+  ccTagInputCommit(section, index, key, null, input, true);
+  ccHideTagSuggestions(input);
+}
+function ccTagInputKeydown(event, input, section, index, key, datalistId){
+  if (!input) return;
+  const box = ccTagSuggestionBox(input);
+  const items = box && !box.hidden ? Array.from(box.querySelectorAll('.cc-tag-suggestion')) : [];
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (!items.length) { ccTagSuggest(input, section, index, key, datalistId); return; }
+    ccSetActiveTagSuggestion(input, Number(box.dataset.active || 0) + 1);
+    return;
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (!items.length) { ccTagSuggest(input, section, index, key, datalistId); return; }
+    ccSetActiveTagSuggestion(input, Number(box.dataset.active || 0) - 1);
+    return;
+  }
+  if (event.key === 'Escape') {
+    ccHideTagSuggestions(input);
+    return;
+  }
+  if ((event.key === 'Enter' || event.key === 'Tab') && items.length) {
+    const active = Math.max(0, Math.min(Number(box.dataset.active || 0), items.length - 1));
+    const value = items[active]?.dataset.value || '';
+    if (value) {
+      event.preventDefault();
+      ccTagSuggestionPick(input, value);
+      return;
+    }
+  }
+  ccTagInputCommit(section, index, key, event, input);
+}
+function ccTagInputBlur(event, input, section, index, key, datalistId){
+  window.setTimeout(() => {
+    if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.cc-tag-suggestions')) return;
+    ccTagInputCommit(section, index, key, event, input, true);
+    ccHideTagSuggestions(input);
+  }, 120);
+}
+function ccRoutePriorityLabel(index, total){
+  if (total <= 1) return '唯一规则';
+  if (index === 0) return '最高优先级';
+  if (index === total - 1) return '末位兜底';
+  if (index < 3) return `高优先级 #${index + 1}`;
+  return `优先级 #${index + 1}`;
+}
+function ccMoveRouteRuleTo(from, to){
+  if (from === to || from < 0 || to < 0) return;
+  const arr = ccState.draft.route_rules;
+  if (from >= arr.length || to > arr.length) return;
+  const item = arr.splice(from, 1)[0];
+  if (from < to) to--;
+  arr.splice(to, 0, item);
+  renderAll();
+}
+function ccRouteDragStart(event, index){
+  ccUI.dragRouteIndex = index;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(index));
+  }
+}
+function ccRouteDragOver(event){
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+}
+function ccRouteDrop(event, index){
+  event.preventDefault();
+  const from = ccUI.dragRouteIndex;
+  ccUI.dragRouteIndex = null;
+  if (typeof from === 'number') ccMoveRouteRuleTo(from, index);
+}
+function ccRouteDragEnd(){
+  ccUI.dragRouteIndex = null;
+}
+function ccRouteOrderKey(item, index){
+  return String(item?.id || item?.summary || item?.outbound || item?.action || `route-${index}`);
+}
+function ccRouteOrderChanges(){
+  const current = (ccState.draft.route_rules || []).map((item, index) => ccRouteOrderKey(item, index));
+  const initialIndex = new Map();
+  ccInitialRouteOrder.forEach((key, index) => initialIndex.set(key, index));
+  const changes = [];
+  current.forEach((key, index) => {
+    const prev = initialIndex.get(key);
+    if (typeof prev === 'number' && prev !== index) {
+      const item = ccState.draft.route_rules[index];
+      changes.push({ key, from: prev, to: index, title: routeRuleTitle(item) });
+    }
+  });
+  return changes;
+}
+function ccRenderRouteOrderSummary(){
+  const box = document.getElementById('cc-route-order-summary');
+  if (!box) return;
+  const changes = ccRouteOrderChanges();
+  if (!changes.length) {
+    box.textContent = '当前顺序与加载时一致';
+    box.className = 'cc-route-order-summary muted';
+    return;
+  }
+  const preview = changes.slice(0, 4).map(change => `${change.from + 1}→${change.to + 1} ${change.title}`).join('；');
+  box.textContent = `检测到 ${changes.length} 条顺序变化：${preview}${changes.length > 4 ? '…' : ''}`;
+  box.className = 'cc-route-order-summary warn-text';
+}
+function ccRenderGuardrailNote(){
+  const box = document.getElementById('cc-guardrail-note');
+  if (!box) return;
+  const parts = [];
+  const routeChanges = ccRouteOrderChanges();
+  if (routeChanges.length) parts.push(`待保存顺序变化 ${routeChanges.length} 条`);
+  const issue = ccState.filters.issue;
+  if (issue && issue !== 'all') parts.push(`当前问题筛选：${issue}`);
+  const query = String(ccState.filters.query || '').trim();
+  if (query) parts.push(`当前搜索：${query}`);
+  parts.push('批量修改、删除和顺序保存前会先提示影响范围');
+  box.textContent = parts.join(' · ');
+}
+function ccPreviewList(values, limit){
+  const list = uniquePreserve(values || []);
+  const slice = list.slice(0, limit || 2);
+  const extra = list.length - slice.length;
+  return slice.join(' / ') + (extra > 0 ? ` +${extra}` : '');
+}
+function ccDeepClone(value){
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+function ccExistingOutboundTags(){
+  return uniquePreserve((ccState.draft.outbounds || []).map((item) => String(item?.tag || '').trim()).filter(Boolean));
+}
+function ccPickExistingOutboundTags(preferred){
+  const existing = new Set(ccExistingOutboundTags());
+  return uniquePreserve((preferred || []).filter((tag) => existing.has(String(tag || '').trim())));
+}
+function ccShortText(value, limit){
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.length > limit ? `${text.slice(0, Math.max(0, limit - 1))}…` : text;
+}
+function ccCompactSource(value){
+  const text = String(value || '').trim();
+  if (!text) return '';
+  try {
+    const url = new URL(text);
+    const path = url.pathname && url.pathname !== '/' ? url.pathname : '';
+    return ccShortText(`${url.hostname}${path}`, 42);
+  } catch (_) {
+    return ccShortText(text, 42);
+  }
+}
+function ccMatchesCommonTag(tag, keywords){
+  const text = String(tag || '').trim();
+  if (!text) return false;
+  return (keywords || []).some((keyword) => text.includes(keyword));
+}
+function ccFindCommonOutbound(def){
+  const items = ccState.draft.outbounds || [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (ccMatchesCommonTag(item?.tag, def.keywords)) return { item, index };
+  }
+  return null;
+}
+function ccFindCommonOutboundByKey(key){
+  const def = ccCommonOutboundDefs.find((item) => item.key === key);
+  return def ? ccFindCommonOutbound(def) : null;
+}
+function ccCommonOutboundRelations(def, item){
+  const members = uniquePreserve(item?.members || item?.outbounds || []);
+  return (def.relatedKeys || []).map((key) => {
+    const relDef = ccCommonOutboundDefs.find((entry) => entry.key === key);
+    const relMatch = ccFindCommonOutboundByKey(key);
+    const tag = relMatch?.item?.tag ? String(relMatch.item.tag).trim() : (relDef?.recommended?.().tag || '');
+    const linked = tag ? members.includes(tag) : false;
+    const order = linked ? members.indexOf(tag) : -1;
+    return {
+      key,
+      title: relDef?.title || key,
+      tag,
+      exists: !!relMatch,
+      linked,
+      order
+    };
+  });
+}
+function ccOpenNewCard(section, index){
+  ccUI.cards[ccCardKey(section, index)] = true;
+}
+function ccInsertSectionItem(section, item, index){
+  ccInsertSectionItems(section, [item], index);
+}
+function ccInsertSectionItems(section, items, index){
+  const list = ccSectionItems(section);
+  const nextItems = (items || []).map(item => ccDeepClone(item));
+  const insertIndex = typeof index === 'number' ? Math.max(0, Math.min(index, list.length)) : list.length;
+  list.splice(insertIndex, 0, ...nextItems);
+  for (let offset = 0; offset < nextItems.length; offset++) ccOpenNewCard(section, insertIndex + offset);
+  renderAll();
+}
+function ccPreferredDirectOutboundTag(){
+  const items = ccState.draft.outbounds || [];
+  const direct = items.find((item) => String(item?.type || '').trim() === 'direct' && String(item?.tag || '').trim());
+  return direct ? String(direct.tag).trim() : '';
+}
+function ccPreferredProxyOutboundTag(){
+  const items = ccState.draft.outbounds || [];
+  const preferred = items.find((item) => {
+    const type = String(item?.type || '').trim();
+    return ['selector', 'urltest'].includes(type) && String(item?.tag || '').trim();
+  });
+  if (preferred) return String(preferred.tag).trim();
+  const fallback = items.find((item) => {
+    const type = String(item?.type || '').trim();
+    return type && !['direct', 'block'].includes(type) && String(item?.tag || '').trim();
+  });
+  return fallback ? String(fallback.tag).trim() : '';
+}
+function ccSuggestedDefaultProxyMembers(){
+  const preferred = [
+    '♻️ 香日新自动',
+    '♻️ 香日新故转',
+    '🇭🇰 香港手动',
+    '🇯🇵 日本手动',
+    '🇸🇬 狮城手动',
+    '🇨🇳 台湾手动',
+    '🇺🇲 美国手动',
+    '🚀 自建节点',
+    '🐸 手动选择',
+    '♻️ 自动选择'
+  ];
+  const members = ccPickExistingOutboundTags(preferred);
+  if (members.length) return members;
+  const fallback = uniquePreserve((ccState.draft.outbounds || []).filter((item) => ['selector', 'urltest'].includes(String(item?.type || '').trim()) && String(item?.tag || '').trim()).map((item) => String(item.tag).trim()));
+  return fallback.slice(0, 10);
+}
+function ccSuggestedFallbackMembers(){
+  const preferred = [];
+  const defaultProxy = ccFindCommonOutboundByKey('default_proxy');
+  const selfBuilt = ccFindCommonOutboundByKey('self_built');
+  if (defaultProxy?.item?.tag) preferred.push(String(defaultProxy.item.tag).trim());
+  if (selfBuilt?.item?.tag) preferred.push(String(selfBuilt.item.tag).trim());
+  if (ccPreferredDirectOutboundTag()) preferred.push(ccPreferredDirectOutboundTag());
+  const members = ccPickExistingOutboundTags(preferred);
+  if (members.length) return members;
+  return ccSuggestedDefaultProxyMembers().slice(0, 3);
+}
+function ccRuleSetTemplate(kind){
+  return {
+    tag: '',
+    type: kind === 'local' ? 'local' : 'remote',
+    format: 'binary',
+    source: '',
+    enabled: true
+  };
+}
+function ccOutboundTemplate(type){
+  if (type === 'selector') {
+    return {tag:'', type:'selector', members:[], filter_include:[], filter_exclude:[], enabled:true};
+  }
+  if (type === 'urltest') {
+    return {tag:'', type:'urltest', members:[], filter_include:[], filter_exclude:[], interval:'10m', tolerance:50, enabled:true};
+  }
+  return {tag:'', type:'direct', members:[], filter_include:[], filter_exclude:[], enabled:true};
+}
+function ccRouteRuleTemplate(kind){
+  const base = {type:'', outbound:'', action:'', clash_mode:'', rule_sets:[], inbound:[], domain:[], domain_suffix:[], ip_cidr:[], network:[], port:'', ip_is_private:null, enabled:true};
+  if (kind === 'direct') {
+    base.outbound = ccPreferredDirectOutboundTag();
+  }
+  if (kind === 'proxy') {
+    base.outbound = ccPreferredProxyOutboundTag();
+  }
+  return base;
+}
+function ccCommonOutboundTemplate(key){
+  const def = ccCommonOutboundDefs.find((item) => item.key === key);
+  return def ? def.recommended() : ccOutboundTemplate('selector');
+}
+function ccCreateCommonOutbound(key){
+  const template = ccCommonOutboundTemplate(key);
+  ccInsertSectionItem('outbounds', template);
+  toast(`已创建常用分组：${template.tag || key}`);
+}
+function ccEnsureCommonOutboundRelations(key){
+  const def = ccCommonOutboundDefs.find((item) => item.key === key);
+  const match = ccFindCommonOutboundByKey(key);
+  if (!def || !match) { toast('当前常用分组还不存在，先创建后再补齐', false); return; }
+  const relations = ccCommonOutboundRelations(def, match.item);
+  if (!relations.length) { toast('这个分组当前没有定义关键关联'); return; }
+  const list = ccState.draft.outbounds || [];
+  const toCreate = [];
+  const neededTags = [];
+  relations.forEach((relation) => {
+    if (!relation.exists) {
+      const template = ccCommonOutboundTemplate(relation.key);
+      toCreate.push(template);
+      if (template.tag) neededTags.push(template.tag);
+      return;
+    }
+    if (relation.tag) neededTags.push(relation.tag);
+  });
+  if (toCreate.length) {
+    toCreate.forEach((item) => {
+      list.push(ccDeepClone(item));
+      ccOpenNewCard('outbounds', list.length - 1);
+    });
+  }
+  const current = uniquePreserve(match.item.members || match.item.outbounds || []);
+  const merged = uniquePreserve(current.concat(neededTags));
+  const changedMembers = merged.length !== current.length || merged.some((item, idx) => item !== current[idx]);
+  match.item.members = merged;
+  if (!changedMembers && !toCreate.length) {
+    toast('关键关联已经补齐');
+    return;
+  }
+  renderAll();
+  toast(`已补齐 ${def.title} 的关键关联${toCreate.length ? `，并创建 ${toCreate.length} 个缺失分组` : ''}`);
+}
+function ccEnsureCommonOutboundRelation(groupKey, relationKey){
+  const def = ccCommonOutboundDefs.find((item) => item.key === groupKey);
+  const match = ccFindCommonOutboundByKey(groupKey);
+  if (!def || !match) { toast('当前常用分组还不存在，先创建后再接入', false); return; }
+  const relationDef = ccCommonOutboundDefs.find((item) => item.key === relationKey);
+  if (!relationDef) { toast('未找到目标关联分组', false); return; }
+  let relationMatch = ccFindCommonOutboundByKey(relationKey);
+  if (!relationMatch) {
+    const list = ccState.draft.outbounds || [];
+    list.push(ccDeepClone(relationDef.recommended()));
+    ccOpenNewCard('outbounds', list.length - 1);
+    relationMatch = ccFindCommonOutboundByKey(relationKey);
+  }
+  const tag = relationMatch?.item?.tag ? String(relationMatch.item.tag).trim() : '';
+  if (!tag) { toast('目标关联分组还没有可用 tag', false); return; }
+  const current = uniquePreserve(match.item.members || match.item.outbounds || []);
+  if (current.includes(tag)) { toast(`${relationDef.title} 已经接入`); return; }
+  match.item.members = current.concat(tag);
+  renderAll();
+  toast(`已将 ${relationDef.title} 接入 ${def.title}`);
+}
+function ccMoveCommonOutboundRelation(groupKey, relationKey, delta){
+  const match = ccFindCommonOutboundByKey(groupKey);
+  const relationMatch = ccFindCommonOutboundByKey(relationKey);
+  if (!match || !relationMatch?.item?.tag) return;
+  const tag = String(relationMatch.item.tag).trim();
+  const list = uniquePreserve(match.item.members || match.item.outbounds || []);
+  const from = list.indexOf(tag);
+  if (from < 0) return;
+  const to = from + delta;
+  if (to < 0 || to >= list.length) return;
+  [list[from], list[to]] = [list[to], list[from]];
+  match.item.members = list;
+  renderAll();
+}
+function ccSortCommonOutboundRelations(groupKey){
+  const def = ccCommonOutboundDefs.find((item) => item.key === groupKey);
+  const match = ccFindCommonOutboundByKey(groupKey);
+  if (!def || !match) return;
+  ccEnsureCommonOutboundRelations(groupKey);
+  const refreshed = ccFindCommonOutboundByKey(groupKey);
+  if (!refreshed) return;
+  const current = uniquePreserve(refreshed.item.members || refreshed.item.outbounds || []);
+  const relationTags = (def.relatedKeys || []).map((key) => ccFindCommonOutboundByKey(key)?.item?.tag).map((tag) => String(tag || '').trim()).filter(Boolean);
+  const preferred = uniquePreserve(relationTags.filter((tag) => current.includes(tag)));
+  const rest = current.filter((tag) => !preferred.includes(tag));
+  refreshed.item.members = preferred.concat(rest);
+  renderAll();
+  toast(`已按推荐顺序整理 ${def.title}`);
+}
+function ccCommonOutboundQuickMembers(def, item){
+  if (typeof def?.quickMembers !== 'function') return null;
+  const preferred = uniquePreserve((def.quickMembers() || []).map((tag) => String(tag || '').trim()).filter((tag) => tag && tag !== String(item?.tag || '').trim()));
+  if (!preferred.length) return null;
+  const current = uniquePreserve(item?.members || item?.outbounds || []);
+  return {
+    preferred,
+    active: current.filter((tag) => preferred.includes(tag)),
+    available: preferred.filter((tag) => !current.includes(tag)),
+    extra: current.filter((tag) => !preferred.includes(tag)),
+    hasAllPlaceholder: current.includes('{all}')
+  };
+}
+function ccAddCommonOutboundMember(groupKey, tag){
+  const def = ccCommonOutboundDefs.find((item) => item.key === groupKey);
+  const match = ccFindCommonOutboundByKey(groupKey);
+  const value = String(tag || '').trim();
+  if (!def || !match || !value) return;
+  const current = uniquePreserve(match.item.members || match.item.outbounds || []);
+  if (current.includes(value)) { toast(`${value} 已在 ${def.title} 中`); return; }
+  match.item.members = current.concat(value);
+  renderAll();
+  toast(`已将 ${value} 加入 ${def.title}`);
+}
+function ccRemoveCommonOutboundMember(groupKey, tag){
+  const def = ccCommonOutboundDefs.find((item) => item.key === groupKey);
+  const match = ccFindCommonOutboundByKey(groupKey);
+  const value = String(tag || '').trim();
+  if (!def || !match || !value) return;
+  const current = uniquePreserve(match.item.members || match.item.outbounds || []);
+  if (!current.includes(value)) return;
+  match.item.members = current.filter((item) => item !== value);
+  renderAll();
+  toast(`已从 ${def.title} 移除 ${value}`);
+}
+function ccApplyCommonOutboundSuggestedMembers(groupKey){
+  const def = ccCommonOutboundDefs.find((item) => item.key === groupKey);
+  const match = ccFindCommonOutboundByKey(groupKey);
+  if (!def || !match) return;
+  const quick = ccCommonOutboundQuickMembers(def, match.item);
+  if (!quick?.available?.length) { toast('当前没有新的推荐成员可补入'); return; }
+  match.item.members = uniquePreserve((match.item.members || match.item.outbounds || []).concat(quick.available));
+  renderAll();
+  toast(`已为 ${def.title} 补入 ${quick.available.length} 个推荐成员`);
+}
+function ccMoveCommonOutboundMember(groupKey, tag, delta){
+  const def = ccCommonOutboundDefs.find((item) => item.key === groupKey);
+  const match = ccFindCommonOutboundByKey(groupKey);
+  const value = String(tag || '').trim();
+  if (!def || !match || !value) return;
+  const current = uniquePreserve(match.item.members || match.item.outbounds || []);
+  const from = current.indexOf(value);
+  if (from < 0) return;
+  const to = from + delta;
+  if (to < 0 || to >= current.length) return;
+  [current[from], current[to]] = [current[to], current[from]];
+  match.item.members = current;
+  renderAll();
+}
+function ccSortCommonOutboundMembers(groupKey){
+  const def = ccCommonOutboundDefs.find((item) => item.key === groupKey);
+  const match = ccFindCommonOutboundByKey(groupKey);
+  if (!def || !match) return;
+  const quick = ccCommonOutboundQuickMembers(def, match.item);
+  if (!quick) return;
+  const current = uniquePreserve(match.item.members || match.item.outbounds || []);
+  const front = current.includes('{all}') ? ['{all}'] : [];
+  const preferred = quick.preferred.filter((tag) => current.includes(tag));
+  const rest = current.filter((tag) => tag !== '{all}' && !preferred.includes(tag));
+  match.item.members = front.concat(preferred, rest);
+  renderAll();
+  toast(`已整理 ${def.title} 的成员顺序`);
+}
+function ccCommonMemberCategory(tag, quick){
+  const text = String(tag || '').trim();
+  const lower = text.toLowerCase();
+  if (!text) return { key: 'other', title: '其他成员', desc: '没有命中高频分类的成员。' };
+  if (text === '{all}') return { key: 'placeholder', title: '模板占位', desc: '模板展开时会自动替换成实际节点。' };
+  if (text.includes('默认代理') || text.includes('漏网之鱼')) return { key: 'core', title: '核心代理链路', desc: '决定大部分默认分流走向的核心组。' };
+  if (text.includes('自动') || text.includes('故转') || lower.includes('urltest')) return { key: 'auto', title: '自动链路', desc: '自动测速或自动故障切换相关分组。' };
+  if (text.includes('手动')) return { key: 'manual', title: '手动链路', desc: '适合人为指定地区和故障切换。' };
+  if (text.includes('自建') || lower.includes('reality')) return { key: 'selfbuilt', title: '自建链路', desc: '自建或 Reality 这类优先手动控制的节点组。' };
+  if (text.includes('直连') || lower === 'direct' || text === 'DIRECT') return { key: 'direct', title: '直连兜底', desc: '本地直连或兜底出口。' };
+  if (quick?.preferred?.includes(text)) return { key: 'common', title: '常用成员', desc: '当前常用分组里比较高频的备选项。' };
+  return { key: 'other', title: '其他成员', desc: '没有命中高频分类的成员。' };
+}
+function ccGroupCommonMemberValues(values, quick){
+  const order = ['placeholder', 'core', 'auto', 'manual', 'selfbuilt', 'direct', 'common', 'other'];
+  const buckets = new Map();
+  uniquePreserve(values || []).forEach((tag) => {
+    const category = ccCommonMemberCategory(tag, quick);
+    if (!buckets.has(category.key)) buckets.set(category.key, { ...category, items: [] });
+    buckets.get(category.key).items.push(String(tag || '').trim());
+  });
+  return order.map((key) => buckets.get(key)).filter((group) => group && group.items.length);
+}
+function ccFocusOutbound(index){
+  ccUI.sections.outbounds = true;
+  ccUI.cards[ccCardKey('outbounds', index)] = true;
+  renderAll();
+  window.setTimeout(() => {
+    const el = document.getElementById(`cc-outbound-card-${index}`);
+    if (el && el.scrollIntoView) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }, 30);
+}
+
+function outboundTitle(item){
+  const tag = String(item?.tag || '').trim();
+  const type = String(item?.type || '').trim();
+  if(tag) return tag;
+  if(type) return `${type}（未命名）`;
+  return '未命名 Outbound';
+}
+
+function routeRuleTitle(item){
+  const parts = [];
+  if(Array.isArray(item?.rule_sets) && item.rule_sets.length) parts.push(`rule_set ${ccPreviewList(item.rule_sets, 1)}`);
+  if(Array.isArray(item?.domain_suffix) && item.domain_suffix.length) parts.push(`suffix ${ccPreviewList(item.domain_suffix, 1)}`);
+  if(Array.isArray(item?.domain) && item.domain.length) parts.push(`domain ${ccPreviewList(item.domain, 1)}`);
+  if(Array.isArray(item?.ip_cidr) && item.ip_cidr.length) parts.push(`ip ${ccPreviewList(item.ip_cidr, 1)}`);
+  if(Array.isArray(item?.network) && item.network.length) parts.push(`network ${ccPreviewList(item.network, 2)}`);
+  if(String(item?.clash_mode || '').trim()) parts.push(`mode ${String(item.clash_mode).trim()}`);
+  if(String(item?.port || '').trim()) parts.push(`port ${String(item.port).trim()}`);
+  if(item?.ip_is_private === true || item?.ip_is_private === false) parts.push(`private ${item.ip_is_private ? 'yes' : 'no'}`);
+  const action = String(item?.outbound || item?.action || '无动作').trim() || '无动作';
+  const head = parts[0] || ccShortText(item?.summary || '', 42);
+  return head ? `${head} -> ${action}` : (item?.summary || item?.outbound || item?.action || 'Route Rule');
+}
+
+function ruleSetMeta(item){
+  const parts = [];
+  if (String(item?.type || '').trim()) parts.push(String(item.type).trim());
+  if (String(item?.format || '').trim()) parts.push(String(item.format).trim());
+  if (String(item?.source || item?.url || item?.path || '').trim()) parts.push(ccCompactSource(item.source || item.url || item.path));
+  if (String(item?.download_detour || '').trim()) parts.push(`detour=${String(item.download_detour).trim()}`);
+  return parts.length ? parts.join(' · ') : '未设置来源';
+}
+
+function outboundMeta(item){
+  const parts = [];
+  const type = String(item?.type || '').trim();
+  if (type) parts.push(type);
+  const members = Array.isArray(item?.members || item?.outbounds) ? (item.members || item.outbounds) : [];
+  if (members.length) parts.push(`成员 ${members.length}`);
+  const include = Array.isArray(item?.filter_include) ? item.filter_include.length : 0;
+  const exclude = Array.isArray(item?.filter_exclude) ? item.filter_exclude.length : 0;
+  if (include || exclude) parts.push(`过滤 +${include} / -${exclude}`);
+  if (String(item?.interval || '').trim()) parts.push(`interval=${String(item.interval).trim()}`);
+  if (item?.tolerance) parts.push(`tol=${item.tolerance}`);
+  return parts.length ? parts.join(' · ') : '未设置关键属性';
+}
+function ccOutboundFilterSummary(item){
+  const include = Array.isArray(item?.filter_include) ? item.filter_include.length : 0;
+  const exclude = Array.isArray(item?.filter_exclude) ? item.filter_exclude.length : 0;
+  if (!include && !exclude) return '当前没有过滤词，只在模板分组或节点筛选时再展开。';
+  return `当前包含 ${include} 条 / 排除 ${exclude} 条过滤词。`;
+}
+function ccOutboundProbeSummary(item){
+  const parts = [];
+  if (String(item?.interval || '').trim()) parts.push(`interval=${String(item.interval).trim()}`);
+  if (item?.tolerance || item?.tolerance === 0) parts.push(`tolerance=${item.tolerance}`);
+  if (String(item?.idle_timeout || '').trim()) parts.push(`idle_timeout=${String(item.idle_timeout).trim()}`);
+  if (item?.interrupt_exist_connections === true || item?.interrupt_exist_connections === false) {
+    parts.push(`interrupt=${item.interrupt_exist_connections ? 'true' : 'false'}`);
+  }
+  return parts.length ? `当前 ${parts.join(' · ')}` : '当前没有测速或切换参数，只有 urltest / 自动切换类分组需要时再展开。';
+}
+function ccRoutePrimaryMatchSummary(item){
+  const parts = [];
+  if (Array.isArray(item?.rule_sets) && item.rule_sets.length) parts.push(`rule_set ${item.rule_sets.length}`);
+  if (Array.isArray(item?.domain) && item.domain.length) parts.push(`domain ${item.domain.length}`);
+  if (Array.isArray(item?.domain_suffix) && item.domain_suffix.length) parts.push(`suffix ${item.domain_suffix.length}`);
+  if (Array.isArray(item?.inbound) && item.inbound.length) parts.push(`inbound ${item.inbound.length}`);
+  return parts.length ? `当前 ${parts.join(' · ')}` : '当前没有常用匹配条件，适合先补 rule_set、域名或入站。';
+}
+function ccRouteAdvancedMatchSummary(item){
+  const parts = [];
+  if (Array.isArray(item?.ip_cidr) && item.ip_cidr.length) parts.push(`ip ${item.ip_cidr.length}`);
+  if (Array.isArray(item?.network) && item.network.length) parts.push(`network ${item.network.length}`);
+  if (String(item?.port || '').trim()) parts.push(`port=${String(item.port).trim()}`);
+  if (item?.ip_is_private === true || item?.ip_is_private === false) parts.push(`private=${item.ip_is_private}`);
+  return parts.length ? `当前 ${parts.join(' · ')}` : '当前没有高级匹配条件，只有网络、端口或私网特例时再展开。';
+}
+
+function routeRuleMeta(item){
+  const conditions = [];
+  if (Array.isArray(item?.rule_sets) && item.rule_sets.length) conditions.push(`rule_set ${item.rule_sets.length}`);
+  if (Array.isArray(item?.domain) && item.domain.length) conditions.push(`domain ${item.domain.length}`);
+  if (Array.isArray(item?.domain_suffix) && item.domain_suffix.length) conditions.push(`suffix ${item.domain_suffix.length}`);
+  if (Array.isArray(item?.ip_cidr) && item.ip_cidr.length) conditions.push(`ip ${item.ip_cidr.length}`);
+  if (Array.isArray(item?.network) && item.network.length) conditions.push(`network ${ccPreviewList(item.network, 2)}`);
+  if (String(item?.port || '').trim()) conditions.push(`port ${String(item.port).trim()}`);
+  if (String(item?.clash_mode || '').trim()) conditions.push(`mode ${String(item.clash_mode).trim()}`);
+  if (Array.isArray(item?.inbound) && item.inbound.length) conditions.push(`inbound ${item.inbound.length}`);
+  const action = String(item?.outbound || item?.action || '未设置动作').trim() || '未设置动作';
+  return `${conditions.length ? conditions.slice(0, 3).join(' · ') : '通用规则'} · -> ${ccShortText(action, 24)}`;
+}
+function ccRouteGroupMeta(item){
+  if (String(item?.clash_mode || '').trim()) return { key: 'clash', title: 'Clash 模式', desc: '跟随 Clash API 模式切换的规则。' };
+  if (Array.isArray(item?.rule_sets) && item.rule_sets.length) return { key: 'ruleset', title: '规则集命中', desc: '依赖 geosite / geoip / 远程 rule_set。' };
+  if ((Array.isArray(item?.domain) && item.domain.length) || (Array.isArray(item?.domain_suffix) && item.domain_suffix.length)) return { key: 'domain', title: '域名匹配', desc: '按精确域名或后缀筛选流量。' };
+  if (Array.isArray(item?.ip_cidr) && item.ip_cidr.length) return { key: 'ip', title: 'IP / CIDR', desc: '按目标地址网段做路由。' };
+  if (Array.isArray(item?.inbound) && item.inbound.length) return { key: 'inbound', title: '入站限定', desc: '只对特定入站流量生效。' };
+  if ((Array.isArray(item?.network) && item.network.length) || String(item?.port || '').trim()) return { key: 'network', title: '网络与端口', desc: '按协议和端口范围控制。' };
+  if (item?.ip_is_private === true || item?.ip_is_private === false) return { key: 'private', title: '私网地址', desc: '局域网或私网地址的特例规则。' };
+  return { key: 'fallback', title: '通用 / 兜底', desc: '没有明显条件的默认收口规则。' };
+}
+function ccGroupRouteEntries(entries){
+  const groups = [];
+  const map = new Map();
+  entries.forEach((entry) => {
+    const meta = ccRouteGroupMeta(entry.item);
+    if (!map.has(meta.key)) {
+      const group = { ...meta, entries: [] };
+      map.set(meta.key, group);
+      groups.push(group);
+    }
+    map.get(meta.key).entries.push(entry);
+  });
+  return groups;
+}
+
+function countNamed(items){
+  return (items || []).filter(item => String(item?.tag || '').trim()).length;
+}
 
 function normalizeDraft(draft){
   return {
@@ -108,6 +1300,141 @@ function normalizeDraft(draft){
     outbounds: Array.isArray(draft?.outbounds) ? draft.outbounds : [],
     route_rules: Array.isArray(draft?.route_rules) ? draft.route_rules : []
   };
+}
+
+function findDuplicates(values){
+  const seen = new Set();
+  const dup = new Set();
+  values.forEach((value) => {
+    const v = String(value || '').trim();
+    if (!v) return;
+    if (seen.has(v)) dup.add(v);
+    seen.add(v);
+  });
+  return Array.from(dup);
+}
+
+function analyzeDraft(draft){
+  const tips = [];
+  const unnamedOutbounds = (draft.outbounds || []).filter(item => !String(item?.tag || '').trim()).length;
+  const duplicateOutbounds = findDuplicates((draft.outbounds || []).map(item => item?.tag));
+  const duplicateRuleSets = findDuplicates((draft.rule_sets || []).map(item => item?.tag));
+  const emptyRuleSetSources = (draft.rule_sets || []).filter(item => !String(item?.source || item?.url || item?.path || '').trim()).length;
+  const emptyRouteTargets = (draft.route_rules || []).filter(item => !String(item?.outbound || item?.action || '').trim()).length;
+  const urltests = (draft.outbounds || []).filter(item => String(item?.type || '').trim() === 'urltest').length;
+  const filteredGroups = (draft.outbounds || []).filter(item => (Array.isArray(item?.filter_include) && item.filter_include.length) || (Array.isArray(item?.filter_exclude) && item.filter_exclude.length)).length;
+
+  if (unnamedOutbounds > 0) tips.push({level: 'warn', text: `${unnamedOutbounds} 个 outbound 还没有 tag。未命名对象后续很难被 route 或 selector 正确引用。`});
+  if (duplicateOutbounds.length > 0) tips.push({level: 'bad', text: `检测到重复 outbound tag：${duplicateOutbounds.join('、')}。这类冲突会让路由目标难以判断。`});
+  if (duplicateRuleSets.length > 0) tips.push({level: 'bad', text: `检测到重复 rule_set tag：${duplicateRuleSets.join('、')}。建议统一命名后再保存。`});
+  if (emptyRuleSetSources > 0) tips.push({level: 'warn', text: `${emptyRuleSetSources} 个 rule_set 没有填写 source/url/path，保存后通常无法实际下载或加载。`});
+  if (emptyRouteTargets > 0) tips.push({level: 'warn', text: `${emptyRouteTargets} 条 route rule 没有设置 outbound/action，可能只写了条件但没有定义动作。`});
+  if ((draft.route_rules || []).length >= 20) tips.push({level: 'info', text: '当前路由规则已经很多，后续可以继续加“按动作/关键字筛选”和“固定区块折叠状态持久化”。'});
+  if (urltests > 0 && filteredGroups === 0) tips.push({level: 'info', text: '已有 urltest 组，但还没有使用 filter_include / filter_exclude。后续可按地区或线路质量做更细分组。'});
+  if (!tips.length) tips.push({level: 'ok', text: '当前草稿结构比较整齐。下一步更适合补“搜索/筛选/批量编辑”这类效率功能，而不是继续堆字段。'});
+  return tips;
+}
+
+function ccBuildSearchText(section, item){
+  if (section === 'rulesets') {
+    return [
+      item?.tag, item?.type, item?.format, item?.source, item?.url, item?.path, item?.download_detour
+    ].join(' ').toLowerCase();
+  }
+  if (section === 'outbounds') {
+    return [
+      item?.tag, item?.type, joinList(item?.members || item?.outbounds), joinList(item?.filter_include),
+      joinList(item?.filter_exclude), item?.interval, item?.idle_timeout, item?.tolerance
+    ].join(' ').toLowerCase();
+  }
+  return [
+    item?.type, item?.outbound, item?.action, item?.clash_mode, joinList(item?.rule_sets), joinList(item?.inbound),
+    joinList(item?.domain), joinList(item?.domain_suffix), joinList(item?.ip_cidr), joinList(item?.network), item?.port, item?.summary
+  ].join(' ').toLowerCase();
+}
+
+function ccMatchesIssue(section, item){
+  const issue = ccUI.filters.issue;
+  if (issue === 'all') return true;
+  if (issue === 'unnamed') {
+    if (section === 'routes') return false;
+    return !String(item?.tag || '').trim();
+  }
+  if (issue === 'unused') {
+    if (section === 'routes') return false;
+    return Number(item?.reference_count || 0) === 0;
+  }
+  if (issue === 'incomplete') {
+    if (section === 'rulesets') return !String(item?.tag || '').trim() || !String(item?.source || item?.url || item?.path || '').trim();
+    if (section === 'outbounds') {
+      const type = String(item?.type || '').trim();
+      const needsMembers = type === 'selector' || type === 'urltest';
+      const members = Array.isArray(item?.members || item?.outbounds) ? (item.members || item.outbounds) : [];
+      return !String(item?.tag || '').trim() || !type || (needsMembers && members.length === 0);
+    }
+    return !String(item?.outbound || item?.action || '').trim();
+  }
+  return true;
+}
+
+function ccFilterEntries(section, items){
+  const query = String(ccUI.filters.query || '').trim().toLowerCase();
+  return (items || []).map((item, index) => ({ item, index })).filter(({ item }) => {
+    if (!ccMatchesIssue(section, item)) return false;
+    if (!query) return true;
+    return ccBuildSearchText(section, item).includes(query);
+  });
+}
+
+function ccRenderSuggestions(){
+  const box = document.getElementById('cc-datalists');
+  if (!box) return;
+  const outboundTags = uniqueSorted((ccState.draft.outbounds || []).map(item => item?.tag));
+  const ruleSetTags = uniqueSorted((ccState.draft.rule_sets || []).map(item => item?.tag));
+  const outboundTypes = uniqueSorted(['direct', 'block', 'selector', 'urltest', 'dns', ...(ccState.draft.outbounds || []).map(item => item?.type)]);
+  const ruleSetTypes = uniqueSorted(['remote', 'local', ...(ccState.draft.rule_sets || []).map(item => item?.type)]);
+  const clashModes = uniqueSorted(['rule', 'global', 'direct', ...(ccState.draft.route_rules || []).map(item => item?.clash_mode)]);
+  const networks = uniqueSorted(['tcp', 'udp', ...(ccState.draft.route_rules || []).flatMap(item => Array.isArray(item?.network) ? item.network : [])]);
+  const makeOptions = (values) => values.map(value => `<option value="${esc(value)}"></option>`).join('');
+  box.innerHTML = `
+    <datalist id="cc-outbound-tags">${makeOptions(outboundTags)}</datalist>
+    <datalist id="cc-ruleset-tags">${makeOptions(ruleSetTags)}</datalist>
+    <datalist id="cc-outbound-types">${makeOptions(outboundTypes)}</datalist>
+    <datalist id="cc-ruleset-types">${makeOptions(ruleSetTypes)}</datalist>
+    <datalist id="cc-clash-modes">${makeOptions(clashModes)}</datalist>
+    <datalist id="cc-network-types">${makeOptions(networks)}</datalist>
+  `;
+}
+
+function ccRenderFilterSummary(){
+  const box = document.getElementById('cc-filter-summary');
+  if (!box) return;
+  const ruleSetsTotal = (ccState.draft.rule_sets || []).length;
+  const outboundsTotal = (ccState.draft.outbounds || []).length;
+  const routesTotal = (ccState.draft.route_rules || []).length;
+  const ruleSetsShown = ccFilterEntries('rulesets', ccState.draft.rule_sets).length;
+  const outboundsShown = ccFilterEntries('outbounds', ccState.draft.outbounds).length;
+  const routesShown = ccFilterEntries('routes', ccState.draft.route_rules).length;
+  setCount('cc-section-count-rulesets', ruleSetsShown === ruleSetsTotal ? ruleSetsTotal : `${ruleSetsShown}/${ruleSetsTotal}`);
+  setCount('cc-section-count-outbounds', outboundsShown === outboundsTotal ? outboundsTotal : `${outboundsShown}/${outboundsTotal}`);
+  setCount('cc-section-count-routes', routesShown === routesTotal ? routesTotal : `${routesShown}/${routesTotal}`);
+  const parts = [];
+  if (ccUI.filters.query) parts.push(`搜索“${ccUI.filters.query}”`);
+  if (ccUI.filters.scope !== 'all') parts.push(`范围 ${ccUI.filters.scope}`);
+  if (ccUI.filters.issue !== 'all') parts.push(`筛选 ${ccUI.filters.issue}`);
+  const prefix = parts.length ? parts.join(' · ') + '，' : '';
+  box.textContent = `${prefix}当前显示 Rule Sets ${ruleSetsShown}/${ruleSetsTotal}，Outbounds ${outboundsShown}/${outboundsTotal}，Route Rules ${routesShown}/${routesTotal}`;
+}
+
+function renderOptimizationHints(){
+  const box = document.getElementById('cc-optimization-list');
+  if (!box) return;
+  const tips = analyzeDraft(ccState.draft);
+  const orderChanges = ccRouteOrderChanges();
+  if (orderChanges.length) {
+    tips.unshift({level: 'info', text: `当前有 ${orderChanges.length} 条 route rule 顺序已调整。保存前建议确认优先级是否符合预期。`});
+  }
+  box.innerHTML = tips.map((tip) => `<div class="${tip.level === 'bad' ? 'bad' : (tip.level === 'warn' ? 'warn-text' : (tip.level === 'ok' ? 'ok' : 'muted'))}">• ${escapeHTML(tip.text)}</div>`).join('');
 }
 
 function syncTextareasFromState(){
@@ -120,6 +1447,9 @@ function syncTextareasFromState(){
   setCount('cc-stat-rulesets', ccState.draft.rule_sets.length);
   setCount('cc-stat-outbounds', ccState.draft.outbounds.length);
   setCount('cc-stat-routes', ccState.draft.route_rules.length);
+  setCount('cc-section-count-rulesets', ccState.draft.rule_sets.length);
+  setCount('cc-section-count-outbounds', ccState.draft.outbounds.length);
+  setCount('cc-section-count-routes', ccState.draft.route_rules.length);
 }
 
 function syncStateFromTextareas(){
@@ -132,79 +1462,410 @@ function renderRuleSets(){
   const box = document.getElementById('cc-rulesets-list');
   const items = ccState.draft.rule_sets || [];
   if(!items.length){ box.innerHTML = '<div class="empty-text">暂无 rule_set，点上方按钮可新增。</div>'; return; }
-  box.innerHTML = items.map((item, i)=>`
-    <div class="object-card">
-      <div class="card-title-row"><h3>#${i+1} ${esc(item.tag || '未命名 Rule Set')}</h3><div class="actions toolbar-slim"><button type="button" class="ghost" onclick="ccRemoveRuleSet(${i})">删除</button></div></div>
-      <div class="object-grid two-col">
-        <label><span class="field-label">Tag</span><input value="${esc(item.tag)}" oninput="ccUpdateRuleSet(${i}, 'tag', this.value)"></label>
-        <label><span class="field-label">Type</span><input value="${esc(item.type)}" oninput="ccUpdateRuleSet(${i}, 'type', this.value)"></label>
-        <label><span class="field-label">Format</span><input value="${esc(item.format)}" oninput="ccUpdateRuleSet(${i}, 'format', this.value)"></label>
-        <label><span class="field-label">Source(url/path)</span><input value="${esc(item.source || item.url || item.path)}" oninput="ccUpdateRuleSet(${i}, 'source', this.value)"></label>
+  const entries = ccFilterEntries('rulesets', items);
+  if(!entries.length){ box.innerHTML = '<div class="empty-text">当前筛选条件下没有匹配的 rule_set。</div>'; return; }
+  box.innerHTML = entries.map(({ item, index: i })=>{
+    const tag = item.tag || '未命名 Rule Set';
+    const references = Number(item.reference_count || 0);
+    return `
+      <details class="object-card cc-object-card" ${ccIsCardOpen('rulesets', i) ? 'open' : ''} ontoggle="ccRememberCard('rulesets', ${i}, this.open)">
+        <summary>
+          <div class="cc-object-summary">
+            <div class="cc-object-main">
+              <div class="cc-object-title">#${i+1} ${esc(tag)}</div>
+              <div class="cc-object-meta">${esc(ruleSetMeta(item))}</div>
+            </div>
+            <div class="cc-object-badges">
+              <span class="badge badge-plain">${references} 引用</span>
+            </div>
+          </div>
+        </summary>
+        <div class="cc-object-body">
+          <div class="card-title-row"><h3>Rule Set 字段</h3><div class="actions toolbar-slim"><button type="button" class="ghost cc-btn-inline" onclick="ccCloneRuleSet(${i})">复制</button><button type="button" class="ghost cc-btn-inline" onclick="ccRemoveRuleSet(${i})">删除</button></div></div>
+          ${ccFieldGroup('基础信息', '先定义可引用的 tag 和来源。', `
+            ${ccField('Tag', ccHelp.ruleset.tag, `<input list="cc-ruleset-tags" value="${esc(item.tag)}" onchange="ccUpdateRuleSet(${i}, 'tag', this.value)">`)}
+            ${ccField('Type', ccHelp.ruleset.type, `<input list="cc-ruleset-types" value="${esc(item.type)}" onchange="ccUpdateRuleSet(${i}, 'type', this.value)">`)}
+            ${ccField('Format', ccHelp.ruleset.format, `<input value="${esc(item.format)}" onchange="ccUpdateRuleSet(${i}, 'format', this.value)">`)}
+            ${ccField('Source(url/path)', ccHelp.ruleset.source, `<input value="${esc(item.source || item.url || item.path)}" onchange="ccUpdateRuleSet(${i}, 'source', this.value)">`, 'object-span-full')}
+          `)}
+          ${ccFieldGroup('下载控制', '只在需要指定下载出口时再设置。', `
+            ${ccField('Download Detour', ccHelp.ruleset.download_detour, `<input list="cc-outbound-tags" value="${esc(item.download_detour)}" onchange="ccUpdateRuleSet(${i}, 'download_detour', this.value)">`)}
+          `, 'cc-field-group-compact', true)}
+        </div>
+      </details>
+    `;
+  }).join('');
+}
+
+function renderCommonOutbounds(){
+  const box = document.getElementById('cc-common-outbounds');
+  if (!box) return;
+  box.innerHTML = ccCommonOutboundDefs.map((def) => {
+    const match = ccFindCommonOutbound(def);
+    if (!match) {
+      return `
+        <section class="cc-common-card cc-common-card-missing">
+          <div class="cc-common-head">
+            <div>
+              <div class="cc-common-title">${esc(def.title)}</div>
+              <div class="cc-common-desc">${esc(def.desc)}</div>
+            </div>
+            <span class="badge badge-warn">缺失</span>
+          </div>
+          <div class="cc-common-empty muted">当前配置里还没有这个分组。</div>
+          <div class="actions toolbar-slim">
+            <button type="button" class="cc-btn-primary" onclick="ccCreateCommonOutbound(${js(def.key)})">按推荐模板创建</button>
+          </div>
+        </section>
+      `;
+    }
+    const { item, index } = match;
+    const relations = ccCommonOutboundRelations(def, item);
+    const quick = ccCommonOutboundQuickMembers(def, item);
+    const relationLinkedCount = relations.filter((relation) => relation.linked).length;
+    const relationPendingCount = relations.length - relationLinkedCount;
+    const relationRows = relations.map((relation) => {
+      const cls = relation.linked ? 'badge-ok' : (relation.exists ? 'badge-warn' : 'badge-bad');
+      const label = relation.linked ? `已接入 #${relation.order + 1}` : (relation.exists ? '待接入' : '缺失');
+      const action = relation.linked
+        ? `<div class="cc-common-relation-actions"><button type="button" class="ghost cc-btn-inline" onclick="ccMoveCommonOutboundRelation(${js(def.key)}, ${js(relation.key)}, -1)">上移</button><button type="button" class="ghost cc-btn-inline" onclick="ccMoveCommonOutboundRelation(${js(def.key)}, ${js(relation.key)}, 1)">下移</button></div>`
+        : `<button type="button" class="ghost cc-btn-inline" onclick="ccEnsureCommonOutboundRelation(${js(def.key)}, ${js(relation.key)})">${relation.exists ? '接入' : '创建并接入'}</button>`;
+      return `
+        <div class="cc-common-relation-row">
+          <div class="cc-common-relation-main">
+            <span class="badge badge-plain ${cls}">${esc(relation.title)} · ${label}</span>
+            <span class="cc-common-relation-tag muted">${esc(relation.tag || '待生成 tag')}</span>
+          </div>
+          ${action}
+        </div>
+      `;
+    }).join('');
+    const currentMemberGroups = quick ? ccGroupCommonMemberValues(item.members || item.outbounds || [], quick) : [];
+    const suggestedMemberGroups = quick ? ccGroupCommonMemberValues(quick.available, quick) : [];
+    const suggestedMemberCount = quick ? quick.available.length : 0;
+    const currentMemberRows = quick ? currentMemberGroups.map((group) => {
+      const rows = group.items.map((tag) => {
+      const trimmed = String(tag || '').trim();
+      const order = uniquePreserve(item.members || item.outbounds || []).indexOf(trimmed);
+      const fixed = trimmed === '{all}';
+      const kindCls = fixed ? 'badge-plain' : (quick.preferred.includes(trimmed) ? 'badge-ok' : 'badge-warn');
+      const kindText = fixed ? '模板占位' : (quick.preferred.includes(trimmed) ? '推荐成员' : '自定义成员');
+      const moveActions = fixed ? '' : `<div class="cc-common-member-actions"><button type="button" class="ghost cc-btn-inline" onclick="ccMoveCommonOutboundMember(${js(def.key)}, ${js(trimmed)}, -1)">上移</button><button type="button" class="ghost cc-btn-inline" onclick="ccMoveCommonOutboundMember(${js(def.key)}, ${js(trimmed)}, 1)">下移</button><button type="button" class="ghost cc-btn-inline" onclick="ccRemoveCommonOutboundMember(${js(def.key)}, ${js(trimmed)})">移除</button></div>`;
+      return `
+        <div class="cc-common-member-row">
+          <div class="cc-common-member-main">
+            <span class="badge ${kindCls}">${kindText} · #${order + 1}</span>
+            <span class="cc-common-member-tag">${esc(trimmed)}</span>
+          </div>
+          ${moveActions}
+        </div>
+      `;
+      }).join('');
+      return `
+        <div class="cc-common-quick-section">
+          <div class="cc-common-quick-section-head">
+            <div class="cc-common-quick-section-title">${esc(group.title)}</div>
+            <div class="cc-common-quick-section-meta">${group.items.length} 项</div>
+          </div>
+          <div class="cc-common-quick-section-desc">${esc(group.desc)}</div>
+          <div class="cc-common-member-list">${rows}</div>
+        </div>
+      `;
+    }).join('') : '';
+    const suggestedMemberChips = quick ? suggestedMemberGroups.map((group) => `
+      <div class="cc-common-quick-section">
+        <div class="cc-common-quick-section-head">
+          <div class="cc-common-quick-section-title">${esc(group.title)}</div>
+          <div class="cc-common-quick-section-meta">${group.items.length} 项</div>
+        </div>
+        <div class="cc-common-quick-section-desc">${esc(group.desc)}</div>
+        <div class="cc-common-chip-list">${group.items.map((tag) => `<button type="button" class="cc-common-chip cc-common-chip-suggested" onclick="ccAddCommonOutboundMember(${js(def.key)}, ${js(tag)})"><span>${esc(tag)}</span><strong>加入</strong></button>`).join('')}</div>
       </div>
-      <div class="muted">引用 ${Number(item.reference_count || 0)}</div>
-    </div>
-  `).join('');
+    `).join('') : '';
+    return `
+      <section class="cc-common-card">
+        <div class="cc-common-head">
+          <div>
+            <div class="cc-common-title">${esc(def.title)}</div>
+            <div class="cc-common-desc">${esc(def.desc)}</div>
+          </div>
+          <span class="badge badge-ok">已接管</span>
+        </div>
+        <div class="cc-common-meta">${esc(outboundMeta(item))}</div>
+        ${relations.length ? `
+          <details class="cc-common-block cc-common-relations"${relationPendingCount ? ' open' : ''}>
+            <summary class="cc-common-block-summary">
+              <div class="cc-common-block-title">关键关联</div>
+              <div class="cc-common-block-meta">${relationLinkedCount} 已接入 · ${relationPendingCount} 待处理</div>
+            </summary>
+            <div class="cc-common-block-body">
+              <div class="cc-common-relations-list">${relationRows}</div>
+            </div>
+          </details>
+        ` : ''}
+        ${quick ? `
+          <div class="cc-common-quick">
+            <div class="cc-common-quick-head">
+              <div class="cc-common-relations-title">快捷成员</div>
+              <div class="cc-common-quick-actions">
+                ${quick.available.length ? `<button type="button" class="ghost cc-btn-inline" onclick="ccApplyCommonOutboundSuggestedMembers(${js(def.key)})">补入推荐成员</button>` : ''}
+                <button type="button" class="ghost cc-btn-inline" onclick="ccSortCommonOutboundMembers(${js(def.key)})">整理成员顺序</button>
+              </div>
+            </div>
+            ${currentMemberRows ? `<div class="cc-common-chip-block"><div class="cc-common-chip-label">当前成员</div>${currentMemberRows}</div>` : ''}
+            ${suggestedMemberChips ? `
+              <details class="cc-common-block cc-common-suggested">
+                <summary class="cc-common-block-summary">
+                  <div class="cc-common-block-title">推荐补充</div>
+                  <div class="cc-common-block-meta">${suggestedMemberCount} 项可加入</div>
+                </summary>
+                <div class="cc-common-block-body">${suggestedMemberChips}</div>
+              </details>
+            ` : ''}
+          </div>
+        ` : ''}
+        <div class="cc-common-body">
+          ${ccFieldGroup('基础设置', '先维护这个分组的名字、类型和成员。', `
+            ${ccField('Tag', ccHelp.outbound.tag, `<input list="cc-outbound-tags" value="${esc(item.tag)}" onchange="ccUpdateOutbound(${index}, 'tag', this.value)">`)}
+            ${ccField('Type', ccHelp.outbound.type, `<input list="cc-outbound-types" value="${esc(item.type)}" onchange="ccUpdateOutbound(${index}, 'type', this.value)">`)}
+            ${ccTagEditor('Members', ccHelp.outbound.members, item.members || item.outbounds, 'outbounds', index, 'members', 'cc-outbound-tags', '输入 tag 后回车添加', 'object-span-full')}
+          `)}
+          ${ccFieldGroup('高级设置', '过滤词和测速参数不常改，只有精调时再展开。', `
+            ${ccTagEditor('Filter Include', ccHelp.outbound.filter_include, item.filter_include, 'outbounds', index, 'filter_include', '', '输入关键字后回车添加')}
+            ${ccTagEditor('Filter Exclude', ccHelp.outbound.filter_exclude, item.filter_exclude, 'outbounds', index, 'filter_exclude', '', '输入关键字后回车添加')}
+            ${ccField('Interval', ccHelp.outbound.interval, `<input value="${esc(item.interval)}" onchange="ccUpdateOutbound(${index}, 'interval', this.value)">`)}
+            ${ccField('Tolerance', ccHelp.outbound.tolerance, `<input type="number" min="0" value="${esc(item.tolerance)}" onchange="ccUpdateOutboundNumber(${index}, 'tolerance', this.value)">`)}
+          `, 'cc-field-group-compact', true)}
+        </div>
+        <div class="cc-common-actions">
+          <div class="cc-common-actions-main">
+            <button type="button" class="ghost cc-btn-inline" onclick="ccFocusOutbound(${index})">定位到完整卡片</button>
+            <button type="button" class="ghost cc-btn-inline" onclick="ccCloneOutbound(${index})">复制这个分组</button>
+          </div>
+          <details class="cc-common-more">
+            <summary>更多操作</summary>
+            <div class="cc-common-more-actions">
+              ${relations.length ? `<button type="button" class="ghost cc-btn-inline" onclick="ccEnsureCommonOutboundRelations(${js(def.key)})">补齐关键关联</button>` : ''}
+              ${relations.length ? `<button type="button" class="ghost cc-btn-inline" onclick="ccSortCommonOutboundRelations(${js(def.key)})">整理关键关联</button>` : ''}
+            </div>
+          </details>
+        </div>
+      </section>
+    `;
+  }).join('');
 }
 
 function renderOutbounds(){
   const box = document.getElementById('cc-outbounds-list');
   const items = ccState.draft.outbounds || [];
+  renderCommonOutbounds();
   if(!items.length){ box.innerHTML = '<div class="empty-text">暂无 outbound，点上方按钮可新增。</div>'; return; }
-  box.innerHTML = items.map((item, i)=>`
-    <div class="object-card">
-      <div class="card-title-row"><h3>#${i+1} ${esc(item.tag || '未命名 Outbound')}</h3><div class="actions toolbar-slim"><button type="button" class="ghost" onclick="ccRemoveOutbound(${i})">删除</button></div></div>
-      <div class="object-grid two-col">
-        <label><span class="field-label">Tag</span><input value="${esc(item.tag)}" oninput="ccUpdateOutbound(${i}, 'tag', this.value)"></label>
-        <label><span class="field-label">Type</span><input value="${esc(item.type)}" oninput="ccUpdateOutbound(${i}, 'type', this.value)"></label>
-        <label class="object-span-full"><span class="field-label">Members (comma separated)</span><input value="${esc(joinList(item.members || item.outbounds))}" oninput="ccUpdateOutboundMembers(${i}, this.value)"></label>
-      </div>
-      <div class="muted">引用 ${Number(item.reference_count || 0)}</div>
-    </div>
-  `).join('');
+  const entries = ccFilterEntries('outbounds', items);
+  if(!entries.length){ box.innerHTML = '<div class="empty-text">当前筛选条件下没有匹配的 outbound。</div>'; return; }
+  box.innerHTML = entries.map(({ item, index: i })=>{
+    const title = outboundTitle(item);
+    const references = Number(item.reference_count || 0);
+    return `
+      <details id="cc-outbound-card-${i}" class="object-card cc-object-card" ${ccIsCardOpen('outbounds', i) ? 'open' : ''} ontoggle="ccRememberCard('outbounds', ${i}, this.open)">
+        <summary>
+          <div class="cc-object-summary">
+            <div class="cc-object-main">
+              <div class="cc-object-title">#${i+1} ${esc(title)}</div>
+              <div class="cc-object-meta">${esc(outboundMeta(item))}</div>
+            </div>
+            <div class="cc-object-badges">
+              <span class="badge badge-plain">${references} 引用</span>
+            </div>
+          </div>
+        </summary>
+        <div class="cc-object-body">
+          <div class="card-title-row"><h3>Outbound 字段</h3><div class="actions toolbar-slim"><button type="button" class="ghost cc-btn-inline" onclick="ccCloneOutbound(${i})">复制</button><details class="cc-inline-more"><summary>更多操作</summary><div class="cc-inline-more-actions"><button type="button" class="ghost cc-btn-inline" onclick="ccRemoveOutbound(${i})">删除</button></div></details></div></div>
+          ${ccFieldGroup('基础结构', '先定义 tag、类型和成员，确保这个出口可被引用。', `
+            ${ccField('Tag', ccHelp.outbound.tag, `<input list="cc-outbound-tags" value="${esc(item.tag)}" onchange="ccUpdateOutbound(${i}, 'tag', this.value)">`)}
+            ${ccField('Type', ccHelp.outbound.type, `<input list="cc-outbound-types" value="${esc(item.type)}" onchange="ccUpdateOutbound(${i}, 'type', this.value)">`)}
+            ${ccTagEditor('Members', ccHelp.outbound.members, item.members || item.outbounds, 'outbounds', i, 'members', 'cc-outbound-tags', '输入 tag 后回车添加', 'object-span-full')}
+          `)}
+          ${ccFieldGroup('过滤条件', ccOutboundFilterSummary(item), `
+            ${ccTagEditor('Filter Include', ccHelp.outbound.filter_include, item.filter_include, 'outbounds', i, 'filter_include', '', '输入关键字后回车添加')}
+            ${ccTagEditor('Filter Exclude', ccHelp.outbound.filter_exclude, item.filter_exclude, 'outbounds', i, 'filter_exclude', '', '输入关键字后回车添加')}
+          `, 'cc-field-group-compact', true)}
+          ${ccFieldGroup('测速与切换', ccOutboundProbeSummary(item), `
+            ${ccField('Interval', ccHelp.outbound.interval, `<input value="${esc(item.interval)}" onchange="ccUpdateOutbound(${i}, 'interval', this.value)">`)}
+            ${ccField('Tolerance', ccHelp.outbound.tolerance, `<input type="number" min="0" value="${esc(item.tolerance)}" onchange="ccUpdateOutboundNumber(${i}, 'tolerance', this.value)">`)}
+            ${ccField('Idle Timeout', ccHelp.outbound.idle_timeout, `<input value="${esc(item.idle_timeout)}" onchange="ccUpdateOutbound(${i}, 'idle_timeout', this.value)">`)}
+            ${ccField('Interrupt Existing', ccHelp.outbound.interrupt_exist_connections, `
+              <select onchange="ccUpdateOutboundBool(${i}, 'interrupt_exist_connections', this.value)">
+                <option value="" ${boolSelectValue(item.interrupt_exist_connections)==='' ? 'selected' : ''}>未设置</option>
+                <option value="true" ${boolSelectValue(item.interrupt_exist_connections)==='true' ? 'selected' : ''}>true</option>
+                <option value="false" ${boolSelectValue(item.interrupt_exist_connections)==='false' ? 'selected' : ''}>false</option>
+              </select>
+            `)}
+          `, 'cc-field-group-compact', true)}
+        </div>
+      </details>
+    `;
+  }).join('');
 }
 
 function renderRouteRules(){
   const box = document.getElementById('cc-routes-list');
   const items = ccState.draft.route_rules || [];
   if(!items.length){ box.innerHTML = '<div class="empty-text">暂无 route rule，点上方按钮可新增。</div>'; return; }
-  box.innerHTML = items.map((item, i)=>`
-    <div class="object-card">
-      <div class="card-title-row"><h3>#${i+1} ${esc(item.summary || item.outbound || item.action || 'Route Rule')}</h3><div class="actions toolbar-slim"><button type="button" class="ghost" onclick="ccMoveRouteRule(${i}, -1)">上移</button><button type="button" class="ghost" onclick="ccMoveRouteRule(${i}, 1)">下移</button><button type="button" class="ghost" onclick="ccRemoveRouteRule(${i})">删除</button></div></div>
-      <div class="object-grid two-col">
-        <label><span class="field-label">Type</span><input value="${esc(item.type)}" oninput="ccUpdateRouteRule(${i}, 'type', this.value)"></label>
-        <label><span class="field-label">Outbound</span><input value="${esc(item.outbound)}" oninput="ccUpdateRouteRule(${i}, 'outbound', this.value)"></label>
-        <label><span class="field-label">Action</span><input value="${esc(item.action)}" oninput="ccUpdateRouteRule(${i}, 'action', this.value)"></label>
-        <label><span class="field-label">Rule Sets (comma separated)</span><input value="${esc(joinList(item.rule_sets))}" oninput="ccUpdateRouteRuleList(${i}, 'rule_sets', this.value)"></label>
-        <label><span class="field-label">Inbound (comma separated)</span><input value="${esc(joinList(item.inbound))}" oninput="ccUpdateRouteRuleList(${i}, 'inbound', this.value)"></label>
-        <label><span class="field-label">Domain (comma separated)</span><input value="${esc(joinList(item.domain))}" oninput="ccUpdateRouteRuleList(${i}, 'domain', this.value)"></label>
-        <label><span class="field-label">Domain Suffix (comma separated)</span><input value="${esc(joinList(item.domain_suffix))}" oninput="ccUpdateRouteRuleList(${i}, 'domain_suffix', this.value)"></label>
-        <label><span class="field-label">IP CIDR (comma separated)</span><input value="${esc(joinList(item.ip_cidr))}" oninput="ccUpdateRouteRuleList(${i}, 'ip_cidr', this.value)"></label>
-      </div>
-    </div>
-  `).join('');
+  const entries = ccFilterEntries('routes', items);
+  if(!entries.length){ box.innerHTML = '<div class="empty-text">当前筛选条件下没有匹配的 route rule。</div>'; return; }
+  const groups = ccGroupRouteEntries(entries);
+  const html = [];
+  html.push('<div class="cc-route-group-note muted">当前按规则类型分组显示，但卡片编号和优先级仍然对应真实命中顺序。</div>');
+  groups.forEach((group) => {
+    html.push(`
+      <section class="cc-route-group">
+        <div class="cc-route-group-header">
+          <div>
+            <div class="cc-route-group-title">${esc(group.title)}</div>
+            <div class="cc-route-group-desc">${esc(group.desc)}</div>
+          </div>
+          <span class="badge badge-plain">${group.entries.length} 条</span>
+        </div>
+    `);
+    group.entries.forEach(({ item, index: i }) => {
+      html.push(`<div class="cc-route-dropzone" ondragover="ccRouteDragOver(event)" ondrop="ccRouteDrop(event, ${i})">拖到这里插入到第 ${i + 1} 位前</div>`);
+      html.push(`
+      <details class="object-card cc-object-card cc-route-card" draggable="true" ondragstart="ccRouteDragStart(event, ${i})" ondragover="ccRouteDragOver(event)" ondrop="ccRouteDrop(event, ${i})" ondragend="ccRouteDragEnd()" ${ccIsCardOpen('routes', i) ? 'open' : ''} ontoggle="ccRememberCard('routes', ${i}, this.open)">
+        <summary>
+          <div class="cc-object-summary">
+            <div class="cc-object-main">
+              <div class="cc-object-title">#${i+1} ${esc(routeRuleTitle(item))}</div>
+              <div class="cc-object-meta">${esc(routeRuleMeta(item))}</div>
+            </div>
+            <div class="cc-object-badges">
+              <span class="badge badge-plain">${ccRoutePriorityLabel(i, items.length)}</span>
+              <span class="badge badge-plain">${Array.isArray(item?.rule_sets) ? item.rule_sets.length : 0} rule_set</span>
+              <span class="badge badge-plain cc-drag-badge">拖拽排序</span>
+            </div>
+          </div>
+        </summary>
+        <div class="cc-object-body">
+          <div class="card-title-row"><h3>Route Rule 字段</h3><div class="actions toolbar-slim"><button type="button" class="ghost cc-btn-inline" onclick="ccCloneRouteRule(${i})">复制</button><button type="button" class="ghost cc-btn-inline" onclick="ccMoveRouteRule(${i}, -1)">上移</button><button type="button" class="ghost cc-btn-inline" onclick="ccMoveRouteRule(${i}, 1)">下移</button><details class="cc-inline-more"><summary>更多操作</summary><div class="cc-inline-more-actions"><button type="button" class="ghost cc-btn-inline" onclick="ccRemoveRouteRule(${i})">删除</button></div></details></div></div>
+          ${ccFieldGroup('动作与模式', '先决定这条规则命中后要做什么。', `
+            ${ccField('Type', ccHelp.route.type, `<input value="${esc(item.type)}" onchange="ccUpdateRouteRule(${i}, 'type', this.value)">`)}
+            ${ccField('Outbound', ccHelp.route.outbound, `<input list="cc-outbound-tags" value="${esc(item.outbound)}" onchange="ccUpdateRouteRule(${i}, 'outbound', this.value)">`)}
+            ${ccField('Action', ccHelp.route.action, `<input value="${esc(item.action)}" onchange="ccUpdateRouteRule(${i}, 'action', this.value)">`)}
+            ${ccField('Clash Mode', ccHelp.route.clash_mode, `<input list="cc-clash-modes" value="${esc(item.clash_mode)}" onchange="ccUpdateRouteRule(${i}, 'clash_mode', this.value)">`)}
+          `)}
+          ${ccFieldGroup('常用匹配', ccRoutePrimaryMatchSummary(item), `
+            ${ccTagEditor('Rule Sets', ccHelp.route.rule_sets, item.rule_sets, 'routes', i, 'rule_sets', 'cc-ruleset-tags', '输入 rule_set tag 后回车添加', 'object-span-full')}
+            ${ccTagEditor('Inbound', ccHelp.route.inbound, item.inbound, 'routes', i, 'inbound', '', '输入 inbound 后回车添加')}
+            ${ccTagEditor('Domain', ccHelp.route.domain, item.domain, 'routes', i, 'domain', '', '输入域名后回车添加')}
+            ${ccTagEditor('Domain Suffix', ccHelp.route.domain_suffix, item.domain_suffix, 'routes', i, 'domain_suffix', '', '输入域名后缀后回车添加')}
+          `)}
+          ${ccFieldGroup('高级匹配', ccRouteAdvancedMatchSummary(item), `
+            ${ccTagEditor('IP CIDR', ccHelp.route.ip_cidr, item.ip_cidr, 'routes', i, 'ip_cidr', '', '输入网段后回车添加')}
+            ${ccTagEditor('Network', ccHelp.route.network, item.network, 'routes', i, 'network', 'cc-network-types', '输入 tcp/udp 后回车添加')}
+            ${ccField('Port', ccHelp.route.port, `<input value="${esc(item.port)}" onchange="ccUpdateRouteRule(${i}, 'port', this.value)">`)}
+            ${ccField('IP Is Private', ccHelp.route.ip_is_private, `
+              <select onchange="ccUpdateRouteRuleBool(${i}, 'ip_is_private', this.value)">
+                <option value="" ${boolSelectValue(item.ip_is_private)==='' ? 'selected' : ''}>未设置</option>
+                <option value="true" ${boolSelectValue(item.ip_is_private)==='true' ? 'selected' : ''}>true</option>
+                <option value="false" ${boolSelectValue(item.ip_is_private)==='false' ? 'selected' : ''}>false</option>
+              </select>
+            `)}
+          `, 'cc-field-group-compact', true)}
+        </div>
+      </details>
+    `);
+    });
+    html.push('</section>');
+  });
+  html.push(`<div class="cc-route-dropzone cc-route-dropzone-end" ondragover="ccRouteDragOver(event)" ondrop="ccRouteDrop(event, ${items.length})">拖到这里插入到末尾</div>`);
+  box.innerHTML = html.join('');
 }
 
 function renderAll(){
   syncTextareasFromState();
+  ccRenderSuggestions();
   renderRuleSets();
   renderOutbounds();
   renderRouteRules();
+  renderOptimizationHints();
+  ccApplyModes();
+  ccApplySectionVisibility();
+  ccApplySectionOpenState();
+  ccRenderFilterSummary();
+  ccRenderRouteOrderSummary();
+  ccRenderGuardrailNote();
 }
 
-function ccAddRuleSet(){ ccState.draft.rule_sets.push({tag:'', type:'remote', format:'binary', source:'', enabled:true}); renderAll(); }
-function ccRemoveRuleSet(i){ ccState.draft.rule_sets.splice(i,1); renderAll(); }
+function ccAddRuleSet(){
+  ccInsertSectionItem('rulesets', ccRuleSetTemplate('remote'));
+}
+function ccAddRuleSetPreset(kind){ ccInsertSectionItem('rulesets', ccRuleSetTemplate(kind)); }
+function ccCloneRuleSet(i){
+  const item = ccState.draft.rule_sets[i];
+  if (!item) return;
+  const next = ccDeepClone(item);
+  if (String(next.tag || '').trim()) next.tag = `${String(next.tag).trim()}-copy`;
+  ccInsertSectionItem('rulesets', next, i + 1);
+}
+function ccRemoveRuleSet(i){
+  const item = ccState.draft.rule_sets[i];
+  const tag = String(item?.tag || '').trim() || `未命名 Rule Set #${i + 1}`;
+  if (!confirm(`准备删除 Rule Set：${tag}\n\n删除后，引用它的规则需要手动修复。确认继续？`)) return;
+  ccState.draft.rule_sets.splice(i,1);
+  renderAll();
+}
 function ccUpdateRuleSet(i, key, value){ ccState.draft.rule_sets[i][key] = value; renderAll(); }
 
-function ccAddOutbound(){ ccState.draft.outbounds.push({tag:'', type:'direct', members:[], enabled:true}); renderAll(); }
-function ccRemoveOutbound(i){ ccState.draft.outbounds.splice(i,1); renderAll(); }
+function ccAddOutbound(){
+  ccInsertSectionItem('outbounds', ccOutboundTemplate('direct'));
+}
+function ccAddOutboundPreset(type){ ccInsertSectionItem('outbounds', ccOutboundTemplate(type)); }
+function ccCloneOutbound(i){
+  const item = ccState.draft.outbounds[i];
+  if (!item) return;
+  const next = ccDeepClone(item);
+  if (String(next.tag || '').trim()) next.tag = `${String(next.tag).trim()}-copy`;
+  ccInsertSectionItem('outbounds', next, i + 1);
+}
+function ccRemoveOutbound(i){
+  const item = ccState.draft.outbounds[i];
+  const tag = String(item?.tag || '').trim() || `未命名 Outbound #${i + 1}`;
+  const refs = Number(item?.reference_count || 0);
+  if (!confirm(`准备删除 Outbound：${tag}\n\n当前引用数：${refs}\n删除后，引用它的规则或分组可能需要手动修复。确认继续？`)) return;
+  ccState.draft.outbounds.splice(i,1);
+  renderAll();
+}
 function ccUpdateOutbound(i, key, value){ ccState.draft.outbounds[i][key] = value; renderAll(); }
 function ccUpdateOutboundMembers(i, value){ ccState.draft.outbounds[i].members = splitList(value); renderAll(); }
+function ccUpdateOutboundList(i, key, value){ ccState.draft.outbounds[i][key] = splitList(value); renderAll(); }
+function ccUpdateOutboundNumber(i, key, value){ const n = Number(value); ccState.draft.outbounds[i][key] = Number.isFinite(n) && n > 0 ? n : 0; renderAll(); }
+function ccUpdateOutboundBool(i, key, value){ ccState.draft.outbounds[i][key] = value === '' ? null : value === 'true'; renderAll(); }
 
-function ccAddRouteRule(){ ccState.draft.route_rules.push({type:'', outbound:'', action:'', rule_sets:[], inbound:[], domain:[], domain_suffix:[], ip_cidr:[], enabled:true}); renderAll(); }
-function ccRemoveRouteRule(i){ ccState.draft.route_rules.splice(i,1); renderAll(); }
+function ccAddRouteRule(){
+  ccInsertSectionItem('routes', ccRouteRuleTemplate(''));
+}
+function ccAddRouteRulePreset(kind){ ccInsertSectionItem('routes', ccRouteRuleTemplate(kind)); }
+function ccCloneRouteRule(i){
+  const item = ccState.draft.route_rules[i];
+  if (!item) return;
+  ccInsertSectionItem('routes', ccDeepClone(item), i + 1);
+}
+function ccRemoveRouteRule(i){
+  const item = ccState.draft.route_rules[i];
+  const title = routeRuleTitle(item);
+  if (!confirm(`准备删除 Route Rule #${i + 1}\n\n${title}\n\n删除后，后续规则的命中顺序会前移。确认继续？`)) return;
+  ccState.draft.route_rules.splice(i,1);
+  renderAll();
+}
 function ccUpdateRouteRule(i, key, value){ ccState.draft.route_rules[i][key] = value; renderAll(); }
 function ccUpdateRouteRuleList(i, key, value){ ccState.draft.route_rules[i][key] = splitList(value); renderAll(); }
-function ccMoveRouteRule(i, delta){ const j=i+delta; if(j<0||j>=ccState.draft.route_rules.length) return; const arr=ccState.draft.route_rules; [arr[i],arr[j]]=[arr[j],arr[i]]; renderAll(); }
+function ccUpdateRouteRuleBool(i, key, value){ ccState.draft.route_rules[i][key] = value === '' ? null : value === 'true'; renderAll(); }
+function ccMoveRouteRule(i, delta){
+  const j = i + delta;
+  if(j < 0 || j >= ccState.draft.route_rules.length) return;
+  const arr = ccState.draft.route_rules;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  renderAll();
+}
 
 function collectDraft(){
   try { syncStateFromTextareas(); } catch (e) { throw new Error('Raw JSON 解析失败: ' + e.message); }
@@ -217,15 +1878,50 @@ function renderValidationResult(res){
   const errors = Array.isArray(res.errors) ? res.errors : [];
   const warnings = Array.isArray(res.warnings) ? res.warnings : [];
   let html = '';
-  if(errors.length){ html += errors.map(x=>`<div class=\"bad\">• ${escapeHTML(x)}</div>`).join(''); }
-  else { html += '<div class=\"ok\">• 未发现结构化引用错误</div>'; }
-  if(warnings.length){ html += '<div class=\"divider\"></div>' + warnings.map(x=>`<div class=\"warn-text\">• ${escapeHTML(x)}</div>`).join(''); }
+  if(errors.length){ html += errors.map(x=>`<div class="bad">• ${escapeHTML(x)}</div>`).join(''); }
+  else { html += '<div class="ok">• 未发现结构化引用错误</div>'; }
+  if(warnings.length){ html += '<div class="divider"></div>' + warnings.map(x=>`<div class="warn-text">• ${escapeHTML(x)}</div>`).join(''); }
   box.innerHTML = html;
   const canApply = !!res.can_apply;
   document.getElementById('cc-stat-apply').textContent = canApply ? '可应用' : '需修复';
   const stat = document.getElementById('cc-stat-validation');
   stat.textContent = `${errors.length} errors / ${warnings.length} warnings`;
-  stat.className = 'stat-sub ' + (canApply ? 'ok' : 'bad');
+  stat.className = 'cc-summary-meta ' + (canApply ? 'ok' : 'bad');
+  renderConfigCenterGuardrail(res);
+}
+
+function renderConfigCenterGuardrail(res){
+  const note = document.getElementById('cc-guardrail-note');
+  if(!note) return;
+  const risk = res && res.risk;
+  const summary = res && res.summary;
+  const parts = [];
+  if(summary){
+    parts.push(`Outbounds ${summary.outbounds_before}→${summary.outbounds_after}`);
+    parts.push(`Rule Sets ${summary.rule_sets_before}→${summary.rule_sets_after}`);
+    parts.push(`Route Rules ${summary.route_rules_before}→${summary.route_rules_after}`);
+  }
+  if(risk && risk.summary) parts.push(risk.summary);
+  note.textContent = parts.length ? parts.join(' · ') : '批量修改、删除和顺序保存前会先提示影响范围。';
+  note.className = 'cc-guardrail-note muted' + ((risk && risk.level === 'bad') ? ' bad' : ((risk && risk.level === 'warn') ? ' warn-text' : ''));
+}
+
+function configCenterRiskMessage(res){
+  const risk = res && res.risk;
+  const summary = res && res.summary;
+  const lines = [];
+  if(summary){
+    lines.push(`本次将写入 ${summary.new_bytes || 0} bytes。`);
+    lines.push(`Outbounds: ${summary.outbounds_before} → ${summary.outbounds_after}`);
+    lines.push(`Rule Sets: ${summary.rule_sets_before} → ${summary.rule_sets_after}`);
+    lines.push(`Route Rules: ${summary.route_rules_before} → ${summary.route_rules_after}`);
+  }
+  if(risk && risk.summary) {
+    lines.push('');
+    lines.push(risk.summary);
+    (risk.items || []).slice(0, 6).forEach(item => lines.push('• ' + item));
+  }
+  return lines.join('\n');
 }
 
 async function configCenterReloadDraft(){
@@ -249,8 +1945,29 @@ async function configCenterValidateDraft(){
 async function configCenterSaveDraft(){
   let draft;
   try { draft = collectDraft(); } catch (e) { toast(e.message, false); return; }
+  const validation = await request('/api/singbox/config-center/validate',{method:'POST', body: JSON.stringify({draft}), silent:true, busyText:'保存前校验...'});
+  if(!validation || !validation.ok || validation.can_apply === false){
+    renderValidationResult(validation || {});
+    toast('草稿校验未通过，已停止保存', false);
+    if(validation && validation.error) showErrorDetail(validation.error);
+    return;
+  }
+  renderValidationResult(validation);
+  const riskLevel = validation.risk && validation.risk.level;
+  if((riskLevel === 'bad' || riskLevel === 'warn') && !confirm(configCenterRiskMessage(validation) + '\n\n确认继续保存？')) return;
+  const routeChanges = ccRouteOrderChanges();
+  if (routeChanges.length) {
+    const preview = routeChanges.slice(0, 5).map(change => `${change.from + 1} → ${change.to + 1} · ${change.title}`).join('\n');
+    if (!confirm(`检测到 ${routeChanges.length} 条 route rule 顺序变化。\n\n${preview}${routeChanges.length > 5 ? '\n…' : ''}\n\n确认按当前顺序保存？`)) return;
+  }
   const res = await request('/api/singbox/config-center/save',{method:'POST', body: JSON.stringify({draft}), busyText:'保存配置中心草稿...'});
-  if(res && res.ok){ await configCenterReloadDraft(); await configCenterValidateDraft(); }
+  if(res && res.ok){
+    if(res.backup_name){
+      showErrorDetail(`配置已保存。\n备份文件：${res.backup_name}\n\n如需回滚，请到 Sing-box → 备份。`);
+    }
+    await configCenterReloadDraft();
+    await configCenterValidateDraft();
+  }
 }
 
 ccState.draft = normalizeDraft(ccState.draft);

@@ -22,6 +22,24 @@ import (
 	"singdns-panel/internal/webassets"
 )
 
+func loadConfigWithNormalizedSingBox(cfgPath string) (*cfgpkg.Config, *services.SystemdService, error) {
+	cfg, err := cfgpkg.Load(cfgPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	systemd := services.NewSystemdService()
+	normalized, changed := services.NormalizeSingBoxServiceConfig(cfg.Services.SingBox, systemd)
+	cfg.Services.SingBox = normalized
+	if changed {
+		if err := cfg.Save(cfgPath); err != nil {
+			log.Printf("warning: normalize sing-box bin path to %s but failed to persist config %s: %v", normalized.BinPath, cfgPath, err)
+		} else {
+			log.Printf("normalized sing-box bin path to %s based on systemd ExecStart", normalized.BinPath)
+		}
+	}
+	return cfg, systemd, nil
+}
+
 func main() {
 	cfgPath := os.Getenv("SINGDNS_CONFIG")
 	if cfgPath == "" {
@@ -40,17 +58,22 @@ func main() {
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				log.Fatal(err)
 			}
-			if err := os.WriteFile(path, []byte(cfgpkg.DefaultConfigTemplate), 0644); err != nil {
-				log.Fatal(err)
-			}
-			log.Printf("wrote default config to %s", path)
-			return
-		case "subscription-update":
-			cfg, err := cfgpkg.Load(cfgPath)
+			initial, err := cfgpkg.GenerateInitialConfig()
 			if err != nil {
 				log.Fatal(err)
 			}
-			systemd := services.NewSystemdService()
+			if err := os.WriteFile(path, []byte(initial.Content), 0640); err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("wrote default config to %s", path)
+			log.Printf("initial login username: %s", initial.Username)
+			log.Printf("initial login password: %s", initial.Password)
+			return
+		case "subscription-update":
+			cfg, systemd, err := loadConfigWithNormalizedSingBox(cfgPath)
+			if err != nil {
+				log.Fatal(err)
+			}
 			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 			if err := singbox.RunScheduledSubscriptionUpdate(); err != nil {
 				log.Fatal(err)
@@ -65,11 +88,10 @@ func main() {
 			if len(os.Args) > 3 {
 				cfgPath = os.Args[3]
 			}
-			cfg, err := cfgpkg.Load(cfgPath)
+			cfg, systemd, err := loadConfigWithNormalizedSingBox(cfgPath)
 			if err != nil {
 				log.Fatal(err)
 			}
-			systemd := services.NewSystemdService()
 			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 			if strings.TrimSpace(rawURL) == "" {
 				rawURL, err = singbox.ReadFullConfigSubscriptionURL()
@@ -93,11 +115,10 @@ func main() {
 			}
 			return
 		case "monitor-run":
-			cfg, err := cfgpkg.Load(cfgPath)
+			cfg, systemd, err := loadConfigWithNormalizedSingBox(cfgPath)
 			if err != nil {
 				log.Fatal(err)
 			}
-			systemd := services.NewSystemdService()
 			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 			monitor := services.NewMonitorService(cfg.Monitor, singbox)
 			res, err := monitor.RunOnce()
@@ -109,11 +130,10 @@ func main() {
 			}
 			return
 		case "monitor-status":
-			cfg, err := cfgpkg.Load(cfgPath)
+			cfg, systemd, err := loadConfigWithNormalizedSingBox(cfgPath)
 			if err != nil {
 				log.Fatal(err)
 			}
-			systemd := services.NewSystemdService()
 			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 			monitor := services.NewMonitorService(cfg.Monitor, singbox)
 			st, err := monitor.Status()
@@ -127,11 +147,10 @@ func main() {
 			}
 			return
 		case "monitor-history":
-			cfg, err := cfgpkg.Load(cfgPath)
+			cfg, systemd, err := loadConfigWithNormalizedSingBox(cfgPath)
 			if err != nil {
 				log.Fatal(err)
 			}
-			systemd := services.NewSystemdService()
 			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 			monitor := services.NewMonitorService(cfg.Monitor, singbox)
 			summary, err := monitor.HistorySummary()
@@ -147,7 +166,7 @@ func main() {
 		}
 	}
 
-	cfg, err := cfgpkg.Load(cfgPath)
+	cfg, systemd, err := loadConfigWithNormalizedSingBox(cfgPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -171,7 +190,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	systemd := services.NewSystemdService()
 	singboxSvc := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 	app := &handlers.App{
 		Config:       cfg,
@@ -216,11 +234,13 @@ func main() {
 		pr.Get("/api/panel/update-config", app.PanelUpdateConfigAPI)
 		pr.Post("/api/panel/update-config", app.PanelUpdateConfigSaveAPI)
 		pr.Get("/api/panel/probe-remote", app.PanelProbeRemoteAPI)
+		pr.Get("/api/panel/upgrade/preflight", app.PanelUpgradePreflightAPI)
 		pr.Get("/api/panel/upgrade/task", app.PanelUpgradeTaskAPI)
 		pr.Post("/api/panel/upgrade", app.PanelUpgradeAPI)
 		pr.Post("/api/panel/upgrade/remote", app.PanelRemoteUpgradeAPI)
 		pr.Get("/api/system/install/status", app.SystemInstallStatusAPI)
 		pr.Post("/api/system/install/singbox", app.SystemInstallSingBoxAPI)
+		pr.Post("/api/system/install/singbox/switch-binary", app.SystemSwitchSingBoxBinaryAPI)
 		pr.Post("/api/system/install/mosdns", app.SystemInstallMosDNSAPI)
 		pr.Post("/api/system/install/mosdns/upload", app.SystemInstallMosDNSUploadAPI)
 		pr.Post("/api/system/install/singbox/upload", app.SystemInstallSingBoxUploadAPI)

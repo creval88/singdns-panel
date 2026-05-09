@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,11 @@ type DashboardHealthOverview struct {
 	LastUpdateMessage    string   `json:"last_update_message"`
 	SubscriptionStale    bool     `json:"subscription_stale"`
 	SubscriptionStaleTip string   `json:"subscription_stale_tip"`
+	BackupCount          int      `json:"backup_count"`
+	ConfigJSONValid      bool     `json:"config_json_valid"`
+	ClashAPIEnabled      bool     `json:"clash_api_enabled"`
+	CPUPercent           string   `json:"cpu_percent"`
+	MemPercent           string   `json:"mem_percent"`
 }
 
 type DashboardSubscriptionDigest struct {
@@ -167,7 +173,7 @@ func (a *App) collectDashboardSnapshot(panelHost string) dashboardSnapshot {
 	wg.Wait()
 
 	out.digest = summarizeSubscriptionUpdates(out.updates)
-	out.health = buildDashboardHealth(out.sb, out.md, out.panelSvc, out.subscription, out.updates)
+	out.health = buildDashboardHealth(out.sb, out.md, out.panelSvc, out.subscription, out.updates, out.backupStatus, out.configStatus, out.clashAPI, out.hostStats)
 	out.actionTimeline = summarizeActionTimeline(out.audits, 3)
 	if len(out.backups) > 0 {
 		out.latestBackupTime = out.backups[0].ModTime
@@ -244,7 +250,7 @@ func (a *App) DashboardAPI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func buildDashboardHealth(sb, md, panel *services.ServiceStatus, sub *services.SubscriptionStatus, events []services.SubscriptionUpdateEvent) DashboardHealthOverview {
+func buildDashboardHealth(sb, md, panel *services.ServiceStatus, sub *services.SubscriptionStatus, events []services.SubscriptionUpdateEvent, backup *services.BackupStatus, config *services.ConfigStatus, clash *services.ClashAPIInfo, host *services.HostStats) DashboardHealthOverview {
 	issues := make([]string, 0, 6)
 	suggestions := make([]string, 0, 6)
 	levelRank := 0 // 0 ok, 1 warn, 2 bad
@@ -274,6 +280,33 @@ func buildDashboardHealth(sb, md, panel *services.ServiceStatus, sub *services.S
 		suggestions = append(suggestions, "在 Sing-box 页面配置订阅 URL")
 		setLevel(1)
 	}
+	if config == nil || !config.ServerJSONValid {
+		issues = append(issues, "sing-box 配置 JSON 无效")
+		suggestions = append(suggestions, "进入配置中心或 Sing-box 配置页修复 JSON 后再保存")
+		setLevel(2)
+	}
+	if backup == nil || backup.Count == 0 {
+		issues = append(issues, "暂无 sing-box 配置备份")
+		suggestions = append(suggestions, "保存配置前先创建一次备份，便于快速回滚")
+		setLevel(1)
+	}
+	if clash == nil || !clash.Enabled {
+		issues = append(issues, "Clash API 未启用")
+		suggestions = append(suggestions, "如需实时流量、分组切换和节点监控，请在 sing-box 配置中启用 clash_api")
+		setLevel(1)
+	}
+	if host != nil {
+		if pct := percentNumber(host.CPUPercent); pct >= 90 {
+			issues = append(issues, "CPU 使用率过高")
+			suggestions = append(suggestions, "检查 sing-box / mosdns 日志和连接数，必要时重启异常服务")
+			setLevel(1)
+		}
+		if pct := percentNumber(host.MemPercent); pct >= 90 {
+			issues = append(issues, "内存使用率过高")
+			suggestions = append(suggestions, "检查系统资源占用，必要时释放缓存或重启异常服务")
+			setLevel(1)
+		}
+	}
 
 	res := DashboardHealthOverview{
 		Level:            "ok",
@@ -283,6 +316,15 @@ func buildDashboardHealth(sb, md, panel *services.ServiceStatus, sub *services.S
 		LastUpdateStatus: "-",
 		LastUpdateTime:   "-",
 		LastSuccessTime:  "-",
+		ConfigJSONValid:  config != nil && config.ServerJSONValid,
+		ClashAPIEnabled:  clash != nil && clash.Enabled,
+	}
+	if backup != nil {
+		res.BackupCount = backup.Count
+	}
+	if host != nil {
+		res.CPUPercent = host.CPUPercent
+		res.MemPercent = host.MemPercent
 	}
 
 	if len(events) == 0 {
@@ -342,6 +384,18 @@ func buildDashboardHealth(sb, md, panel *services.ServiceStatus, sub *services.S
 		res.Summary = "系统健康"
 	}
 	return res
+}
+
+func percentNumber(v string) float64 {
+	v = strings.TrimSpace(strings.TrimSuffix(v, "%"))
+	if v == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 func summarizeSubscriptionUpdates(events []services.SubscriptionUpdateEvent) DashboardSubscriptionDigest {

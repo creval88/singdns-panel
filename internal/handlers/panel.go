@@ -106,16 +106,49 @@ func (a *App) PanelProbeRemoteAPI(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "probe": probe})
 }
 
+func (a *App) PanelUpgradePreflightAPI(w http.ResponseWriter, r *http.Request) {
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	if kind == "" {
+		kind = "local"
+	}
+	preflight, err := a.Panel.UpgradePreflight(kind)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error(), "preflight": preflight})
+		return
+	}
+	status := http.StatusOK
+	if preflight != nil && !preflight.OK {
+		status = http.StatusBadRequest
+	}
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": preflight != nil && preflight.OK, "preflight": preflight})
+}
+
 func (a *App) PanelUpgradeAPI(w http.ResponseWriter, r *http.Request) {
+	preflight, err := a.Panel.UpgradePreflight("local")
+	if err != nil || preflight == nil || !preflight.OK {
+		if err == nil {
+			err = fmt.Errorf("升级前检查未通过")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error(), "preflight": preflight})
+		return
+	}
 	user, _ := a.Sessions.Username(r)
 	task := a.Panel.NewTask("local", "", "")
+	a.Panel.MarkTaskPreflight(task.ID, preflight)
 	go func(username, taskID string) {
 		time.Sleep(200 * time.Millisecond)
 		a.Panel.MarkTaskRunning(taskID, "正在执行本地升级脚本")
+		a.Panel.MarkTaskStep(taskID, "running", "执行升级脚本", "开始执行本地 release/upgrade.sh 或自定义 upgrade_command")
 		err := a.Panel.Upgrade()
 		if err != nil {
 			a.Panel.MarkTaskFailed(taskID, err)
 		} else {
+			a.Panel.MarkTaskStep(taskID, "ok", "服务验证通过", "升级脚本已执行完成，singdns-panel 服务处于 active 状态")
 			a.Panel.MarkTaskSuccess(taskID, "本地升级完成，服务已恢复")
 		}
 		if a.Audit != nil {
@@ -161,6 +194,16 @@ func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 	expectedSHA := strings.TrimSpace(in.SHA256)
 	resolvedVersion := ""
 	if downloadURL == "" {
+		preflight, err := a.Panel.UpgradePreflight("remote")
+		if err != nil || preflight == nil || !preflight.OK {
+			if err == nil {
+				err = fmt.Errorf("远程升级前检查未通过")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error(), "preflight": preflight})
+			return
+		}
 		rr, err := a.Panel.ResolveRemoteRelease()
 		if err != nil {
 			respondMessage(w, fmt.Errorf("未提供下载链接，且自动解析远程版本失败: %w", err), "")
@@ -192,11 +235,13 @@ func (a *App) PanelRemoteUpgradeAPI(w http.ResponseWriter, r *http.Request) {
 			msg = fmt.Sprintf("正在升级到 %s", strings.TrimSpace(version))
 		}
 		a.Panel.MarkTaskRunning(taskID, msg)
+		a.Panel.MarkTaskStep(taskID, "running", "执行远程升级脚本", "升级包已下载并解压到 release 目录，开始执行 upgrade.sh")
 
 		err := a.Panel.Upgrade()
 		if err != nil {
 			a.Panel.MarkTaskFailed(taskID, err)
 		} else {
+			a.Panel.MarkTaskStep(taskID, "ok", "服务验证通过", "升级脚本已执行完成，singdns-panel 服务处于 active 状态")
 			successMsg := "远程升级完成，服务已恢复"
 			if strings.TrimSpace(version) != "" {
 				successMsg = fmt.Sprintf("已升级到 %s，服务已恢复", strings.TrimSpace(version))

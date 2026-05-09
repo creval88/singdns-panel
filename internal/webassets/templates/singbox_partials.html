@@ -90,6 +90,49 @@
       {{end}}
     </div>
 
+    <div class="divider"></div>
+    <div class="mini-split-head">
+      <div>
+        <div class="section-title tight">当前活动节点来源</div>
+        <div class="section-note">这里展示当前生效配置里，由面板托管并实际写入的节点来源与命中分组。</div>
+      </div>
+    </div>
+    <div class="info-strip-grid subscription-source-grid">
+      <div class="info-pill"><span class="muted">当前模式</span><b id="subscription-source-mode">{{if .Subscription.Sources}}{{if eq .Subscription.Sources.ActiveMode "nodes_template"}}节点模板合并{{else if eq .Subscription.Sources.ActiveMode "full_config"}}完整配置订阅{{else}}待生成{{end}}{{else}}待生成{{end}}</b></div>
+      <div class="info-pill"><span class="muted">托管节点</span><b id="subscription-source-managed">{{if .Subscription.Sources}}{{.Subscription.Sources.ManagedNodeCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">手动来源</span><b id="subscription-source-manual">{{if .Subscription.Sources}}{{.Subscription.Sources.ManualNodeCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">订阅来源</span><b id="subscription-source-subscription">{{if .Subscription.Sources}}{{.Subscription.Sources.SubscriptionCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">自建节点命中</span><b id="subscription-source-selfbuilt">{{if .Subscription.Sources}}{{.Subscription.Sources.SelfBuiltCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">命中分组</span><b id="subscription-source-groups">{{if .Subscription.Sources}}{{.Subscription.Sources.MatchedGroupCount}}{{else}}0{{end}}</b></div>
+    </div>
+    <div class="backup-list" id="subscription-source-note-list">
+      {{if and .Subscription.Sources .Subscription.Sources.Notes}}
+        {{range .Subscription.Sources.Notes}}
+        <div class="backup-item backup-item-compact source-note-item"><div><div class="backup-name">{{.}}</div></div></div>
+        {{end}}
+      {{else}}
+        <div class="muted empty-text">暂无补充说明</div>
+      {{end}}
+    </div>
+    <div class="backup-list" id="subscription-source-node-list">
+      {{if and .Subscription.Sources .Subscription.Sources.Nodes}}
+        {{range .Subscription.Sources.Nodes}}
+        <div class="backup-item backup-item-compact source-node-item">
+          <div>
+            <div class="backup-name">{{.Tag}}</div>
+            <div class="muted">{{or .Type "-"}}{{if .Server}} · {{.Server}}{{end}}{{if .Groups}} · 分组 {{range $i, $g := .Groups}}{{if $i}} / {{end}}{{$g}}{{end}}{{end}}</div>
+          </div>
+          <div class="source-badges">
+            <span class="badge badge-plain {{if eq .Source "subscription"}}badge-ok{{else if eq .Source "manual"}}badge-warn{{end}}">{{if eq .Source "subscription"}}订阅节点{{else if eq .Source "manual"}}手动节点{{else}}待确认{{end}}</span>
+            {{if .SelfBuilt}}<span class="badge badge-plain source-badge-selfbuilt">自建节点</span>{{end}}
+          </div>
+        </div>
+        {{end}}
+      {{else}}
+        <div class="muted empty-text">暂无活动托管节点</div>
+      {{end}}
+    </div>
+
     <div class="actions">
       <button onclick="saveSub()">保存节点订阅</button>
       <button onclick="confirmUpdateNodeSub()">立即更新节点模板订阅</button>
@@ -236,43 +279,113 @@
 {{define "monitor_cron_card"}}
 <section class="card">
   <div class="card-title-row"><h3>节点监控自动执行</h3><span class="badge">Monitor</span></div>
-  <div class="status-list kv-list">
-    <div><b>自动检测切换</b><span>{{if .MonitorStatus.Enabled}}<span class="ok">已启用</span>{{else}}<span class="bad">已关闭</span>{{end}}</span></div>
+  <div class="info-strip-grid monitor-overview-grid">
+    <div class="info-pill"><span class="muted">监控模式</span><b id="monitor-mode-inline">{{or .MonitorStatus.Mode "-"}}</b></div>
+    <div class="info-pill"><span class="muted">当前默认出口</span><b id="monitor-target-inline">{{or .MonitorStatus.ActualDefaultTarget "-"}}</b></div>
+    <div class="info-pill"><span class="muted">主组最近延迟</span><b id="monitor-primary-latency-inline">{{if gt .MonitorStatus.LastPrimaryLatencyMS 0}}{{.MonitorStatus.LastPrimaryLatencyMS}}ms{{else}}-{{end}}</b></div>
+    <div class="info-pill"><span class="muted">备组最近延迟</span><b id="monitor-fallback-latency-inline">{{if gt .MonitorStatus.LastFallbackLatency 0}}{{.MonitorStatus.LastFallbackLatency}}ms{{else}}-{{end}}</b></div>
+    <div class="info-pill"><span class="muted">最近运行</span><b id="monitor-last-run-inline">{{or .MonitorStatus.LastRunAt "-"}}</b></div>
+    <div class="info-pill"><span class="muted">最近切换</span><b id="monitor-last-switch-inline">{{or .MonitorStatus.LastSwitchAt "-"}}</b></div>
+  </div>
+  <div class="status-list kv-list compact-kv monitor-status-list">
+    <div><b>自动检测切换</b><span id="monitor-enabled-inline">{{if .MonitorStatus.Enabled}}<span class="ok">已启用</span>{{else}}<span class="bad">已关闭</span>{{end}}</span></div>
     <div><b>当前状态</b><span id="monitor-cron-enabled">{{if .MonitorCron.Enabled}}<span class="ok">已开启</span>{{else}}<span class="bad">未开启</span>{{end}}</span></div>
-    <div><b>任务信息</b><span id="monitor-cron-summary">{{if .MonitorCron.Enabled}}{{.MonitorCron.Summary}}（每轮含 30 秒补跑）{{else}}未开启{{end}}</span></div>
-    <div><b>监控模式</b><span id="monitor-mode-inline">{{or .MonitorStatus.Mode "-"}}</span></div>
-    <div><b>默认代理</b><span id="monitor-target-inline">{{or .MonitorStatus.ActualDefaultTarget "-"}}</span></div>
+    <div><b>任务信息</b><span id="monitor-cron-summary">{{if .MonitorCron.Enabled}}{{.MonitorCron.Summary}}{{else}}未开启{{end}}</span></div>
+    <div><b>主组 / 当前节点</b><span><span id="monitor-primary-inline">{{or .MonitorStatus.PrimaryGroup "-"}}</span> / <span id="monitor-primary-actual-inline">{{or .MonitorStatus.PrimaryActual "-"}}</span></span></div>
+    <div><b>备组</b><span id="monitor-fallback-inline">{{or .MonitorStatus.FallbackGroup "-"}}</span></div>
     <div><b>当前策略说明</b><span id="monitor-strategy-summary">加载中...</span></div>
   </div>
-  <div class="section-note">这里可以直接配置监控策略，不再写死“香港手动 -> 自建节点”。比如可改成：日本手动 <= 200ms，异常时切到美国节点 <= 500ms。注意：**自动检测切换**是整套功能总开关；关闭后就不会再自动检测、自动切换。组内优选只是总开关开启时的一个子策略。</div>
-  <div class="grid two singbox-work-grid">
-    <div class="card" style="padding:12px; margin:0;">
-      <div class="status-list kv-list compact-kv">
-        <div><b>启用自动检测切换</b><span><input id="monitor-enabled" type="checkbox" {{if .MonitorConfig.Enabled}}checked{{end}}></span></div>
-        <div><b>关闭组内优选</b><span><input id="monitor-disable-primary-optimization" type="checkbox" {{if .MonitorConfig.DisablePrimaryGroupOptimization}}checked{{end}}></span></div>
-        <div><b>自动回切</b><span><input id="monitor-auto-failback" type="checkbox" {{if .MonitorConfig.AutoFailback}}checked{{end}}></span></div>
+  <div class="section-note">监控会按 Clash API 实时读取分组状态。这里优先用当前可用分组下拉选择，避免手填名字时因为 emoji 前缀、重命名或模板变化而配错。</div>
+  <div class="monitor-config-grid">
+    <section class="monitor-config-block">
+      <div class="section-title tight">1. 监控对象</div>
+      <div class="section-note">决定“面板接管哪个总出口”，以及主备分别是谁。默认代理组一般选 `默认代理` 这一层，而不是某个具体节点。</div>
+      <label class="field-label" for="monitor-default-proxy-group">默认代理组</label>
+      <select id="monitor-default-proxy-group"></select>
+      <div class="field-help" id="monitor-default-proxy-group-resolved">读取当前 Clash 分组后，会在这里显示解析结果。</div>
+      <label class="field-label" for="monitor-primary-group">主组</label>
+      <select id="monitor-primary-group"></select>
+      <div class="field-help" id="monitor-primary-group-resolved">建议放常用主线路，例如“香港手动”或“香日新自动”。</div>
+      <label class="field-label" for="monitor-fallback-group">备组</label>
+      <select id="monitor-fallback-group"></select>
+      <div class="field-help" id="monitor-fallback-group-resolved">主组连续异常时，会把默认代理切到这里。</div>
+      <div class="monitor-group-toolbar">
+        <div class="section-note" id="monitor-group-source">正在读取当前 Clash 分组...</div>
+        <button type="button" class="ghost" onclick="refreshMonitorGroups(true)">重新读取分组</button>
       </div>
-      <div class="cron-form">
-        <input id="monitor-default-proxy-group" placeholder="默认代理组名" value="{{.MonitorConfig.DefaultProxyGroup}}">
-        <input id="monitor-primary-group" placeholder="主组名，如 日本手动" value="{{.MonitorConfig.PrimaryGroup}}">
-        <input id="monitor-primary-delay" type="number" min="1" placeholder="主组最大延迟(ms)" value="{{.MonitorConfig.PrimaryMaxStableDelayMS}}">
-        <input id="monitor-fallback-group" placeholder="回退组名，如 美国节点" value="{{.MonitorConfig.FallbackGroup}}">
-        <input id="monitor-fallback-delay" type="number" min="1" placeholder="回退组最大延迟(ms)" value="{{.MonitorConfig.FallbackMaxStableDelayMS}}">
-        <input id="monitor-fail-threshold" type="number" min="1" placeholder="失败阈值" value="{{.MonitorConfig.FailThreshold}}">
-        <input id="monitor-success-threshold" type="number" min="1" placeholder="恢复阈值" value="{{.MonitorConfig.SuccessThreshold}}">
-        <input id="monitor-recheck-interval" type="number" min="1" placeholder="复检间隔(秒)" value="{{.MonitorConfig.RecheckIntervalSec}}">
+      <div class="backup-list compact-list monitor-group-list" id="monitor-group-list">
+        <div class="muted empty-text">等待加载当前可选分组...</div>
       </div>
-    </div>
-    <div class="card" style="padding:12px; margin:0;">
-      <div class="cron-form">
-        <input id="monitor-api-base" placeholder="Clash API，如 http://127.0.0.1:9090" value="{{.MonitorConfig.APIBase}}">
-        <input id="monitor-test-url" placeholder="测试 URL" value="{{.MonitorConfig.TestURL}}">
-        <input id="monitor-timeout-ms" type="number" min="100" placeholder="timeout(ms)" value="{{.MonitorConfig.TimeoutMS}}">
-        <input id="monitor-state-file" placeholder="状态文件路径" value="{{.MonitorConfig.StateFile}}">
-        <input id="monitor-interval-minutes" type="number" min="1" max="30" placeholder="每隔几分钟触发一次，默认 1">
+    </section>
+    <section class="monitor-config-block">
+      <div class="section-title tight">2. 切换策略</div>
+      <div class="section-note">这部分控制什么时候判定主组不稳、什么时候允许切到备组，以及主组恢复后要不要自动回切。</div>
+      <div class="monitor-checkbox-grid">
+        <label class="monitor-checkbox-row"><span>启用自动检测切换</span><input id="monitor-enabled" type="checkbox" {{if .MonitorConfig.Enabled}}checked{{end}}></label>
+        <label class="monitor-checkbox-row"><span>关闭组内优选</span><input id="monitor-disable-primary-optimization" type="checkbox" {{if .MonitorConfig.DisablePrimaryGroupOptimization}}checked{{end}}></label>
+        <label class="monitor-checkbox-row"><span>自动回切</span><input id="monitor-auto-failback" type="checkbox" {{if .MonitorConfig.AutoFailback}}checked{{end}}></label>
       </div>
-      <div class="section-note">关闭“组内优选”后，主组异常时不会在主组内部挑最低延迟节点，而是直接按主/备组切换。</div>
-    </div>
+      <div class="monitor-form-grid two-col">
+        <div>
+          <label class="field-label" for="monitor-primary-delay">主组最大稳定延迟</label>
+          <input id="monitor-primary-delay" type="number" min="1" value="{{.MonitorConfig.PrimaryMaxStableDelayMS}}">
+          <div class="field-help">低于这个值才认为主组健康。主组内部启用优选时，会挑选主组成员里延迟最低的节点。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-fallback-delay">备组最大稳定延迟</label>
+          <input id="monitor-fallback-delay" type="number" min="1" value="{{.MonitorConfig.FallbackMaxStableDelayMS}}">
+          <div class="field-help">主组异常时，只有备组也通过这个阈值，才会执行切换。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-fail-threshold">主组异常阈值</label>
+          <input id="monitor-fail-threshold" type="number" min="1" value="{{.MonitorConfig.FailThreshold}}">
+          <div class="field-help">连续失败多少次才真正切备组，避免一次偶发波动就切换。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-success-threshold">主组恢复阈值</label>
+          <input id="monitor-success-threshold" type="number" min="1" value="{{.MonitorConfig.SuccessThreshold}}">
+          <div class="field-help">打开自动回切后，主组要连续成功这么多次才会切回来。</div>
+        </div>
+        <div class="object-span-full">
+          <label class="field-label" for="monitor-recheck-interval">复检间隔（秒）</label>
+          <input id="monitor-recheck-interval" type="number" min="1" value="{{.MonitorConfig.RecheckIntervalSec}}">
+          <div class="field-help">同一轮检测里，重试主组或回切确认时，两次测速之间的等待时间。</div>
+        </div>
+      </div>
+      <div class="monitor-preview-box">
+        <div class="section-title tight">策略预览</div>
+        <div class="section-note" id="monitor-config-preview">保存前会在这里实时预览当前策略。</div>
+      </div>
+    </section>
+    <section class="monitor-config-block">
+      <div class="section-title tight">3. 执行方式</div>
+      <div class="section-note">这里控制监控从哪里读 Clash API、用什么测试 URL、多久执行一次，以及状态文件写到哪里。</div>
+      <label class="field-label" for="monitor-api-base">Clash API</label>
+      <input id="monitor-api-base" placeholder="http://127.0.0.1:9090" value="{{.MonitorConfig.APIBase}}">
+      <div class="field-help">通常保持本机 `127.0.0.1:9090` 即可，除非你特地改过 `external_controller`。</div>
+      <label class="field-label" for="monitor-test-url">测速 URL</label>
+      <input id="monitor-test-url" placeholder="http://www.gstatic.com/generate_204" value="{{.MonitorConfig.TestURL}}">
+      <div class="field-help">建议用返回快、无内容的 URL。这个地址只用于延迟探测，不会写入配置。</div>
+      <div class="monitor-form-grid two-col">
+        <div>
+          <label class="field-label" for="monitor-timeout-ms">超时（毫秒）</label>
+          <input id="monitor-timeout-ms" type="number" min="100" value="{{.MonitorConfig.TimeoutMS}}">
+          <div class="field-help">单次测速多久算超时。网络抖动比较大时可以适当调高。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-interval-minutes">定时任务间隔（分钟）</label>
+          <input id="monitor-interval-minutes" type="number" min="1" max="30" placeholder="默认 1">
+          <div class="field-help">保存监控任务时使用的执行间隔；适合 1 到 5 分钟一轮。</div>
+        </div>
+      </div>
+      <label class="field-label" for="monitor-state-file">状态文件路径</label>
+      <input id="monitor-state-file" placeholder="状态文件路径" value="{{.MonitorConfig.StateFile}}">
+      <div class="field-help">用来记录最近执行结果、切换历史和锁文件。一般保持默认即可。</div>
+      <div class="monitor-preview-box">
+        <div class="section-title tight">任务摘要</div>
+        <div class="section-note">当前定时任务：<span id="monitor-cron-summary-inline">{{if .MonitorCron.Enabled}}{{.MonitorCron.Summary}}{{else}}未开启{{end}}</span></div>
+      </div>
+    </section>
   </div>
   <div class="actions">
     <button onclick="saveMonitorConfig()">保存监控策略</button>
@@ -342,28 +455,47 @@
 <section class="grid two singbox-work-grid">
   <section class="card">
     <div class="card-title-row"><h3>模版配置（可编辑）</h3><span class="badge">Template JSON</span></div>
-    <div class="section-note">这里是订阅生成用的模版配置（静态结构）。保存模版不会直接覆盖运行中的完整配置；执行“立即更新订阅”后才会基于模版 + 订阅节点 + 规则筛选生成新完整配置。</div>
+    <div class="section-note">这里是订阅生成用的模版配置（静态结构）。保存模版不会直接覆盖运行中的完整配置；执行“立即更新订阅”后才会基于模版 + 订阅节点 + 规则筛选生成新完整配置。现在会同时校验 JSON 格式和当前 sing-box 内核兼容性，像不支持的 inbound/outbound 类型会提前提示。</div>
     <textarea id="template-config" class="editor">{{.TemplateConfig}}</textarea>
     <div class="actions">
       <button class="ghost" onclick="formatTemplateConfig()">格式化模版 JSON</button>
       <button onclick="validateTemplateConfig()">校验模版</button>
       <button onclick="saveTemplateConfig()">保存模版</button>
+      <a class="btn-link ghost" href="/config-center">结构化配置中心</a>
     </div>
   </section>
   <section class="card">
-    <div class="card-title-row"><h3>完整配置（只读）</h3><span class="badge">Generated</span></div>
-    <div class="section-note">该区域展示当前生效的完整配置。若要修改，请改左侧模版并重新执行“立即更新订阅”。</div>
-    <textarea id="config" class="editor" readonly>{{.Config}}</textarea>
+    <div class="card-title-row"><h3>完整配置（可编辑）</h3><span class="badge">Generated</span></div>
+    <div class="section-note">这里展示当前生效的完整配置，也支持直接修订。适合热修、小范围变更；长期结构调整仍建议优先改左侧模版或“结构化配置中心”。</div>
+    <textarea id="config" class="editor">{{.Config}}</textarea>
     <div class="actions">
-      <button class="ghost" onclick="syncConfigFromServer()">刷新完整配置</button>
+      <button class="ghost" onclick="formatConfig()">格式化 JSON</button>
+      <button class="ghost" onclick="syncConfigFromServer()">从服务器同步</button>
+      <button class="ghost" onclick="resetLocalDraft()">丢弃本地草稿</button>
       <button onclick="validateConfig()">校验完整配置</button>
+      <button onclick="saveConfig(false)">保存配置</button>
+      <button onclick="saveConfig(true)">保存并重启</button>
       <button class="ghost" onclick="quickRollbackLatestBackup()">一键回滚到最新备份</button>
     </div>
     <div class="status-list kv-list compact-kv">
+      <div><b>草稿状态</b><span id="config-dirty-state" class="ok">与服务器一致</span></div>
+      <div><b>冲突提示</b><span id="config-conflict-state">无</span></div>
       <div><b>服务器配置时间</b><span id="config-updated-at">{{.UpdatedAt}}</span></div>
       <div><b>服务器 JSON</b><span id="config-json-valid">{{if .ConfigStatus.ServerJSONValid}}<span class="ok">有效</span>{{else}}<span class="bad">无效</span>{{end}}</span></div>
       <div><b>服务器大小</b><span id="config-server-size">{{if .ConfigStatus}}{{.ConfigStatus.ServerBytes}} bytes / {{.ConfigStatus.ServerLines}} lines{{end}}</span></div>
+      <div><b>风险级别</b><span id="config-risk-level" class="badge badge-plain">未校验</span></div>
     </div>
+    <div class="section-note" id="config-risk-summary">点击“校验完整配置”后，会在这里展示关键字段风险提示。</div>
+    <div id="config-risk-items" class="status-list kv-list compact-kv"><div class="muted">暂无风险项</div></div>
+    <div class="divider"></div>
+    <div class="mini-split-head">
+      <div>
+        <div class="section-title tight">本地草稿 vs 服务器配置</div>
+        <div class="section-note" id="config-diff-hint">这里显示浏览器本地草稿与服务器当前配置的差异预览。</div>
+      </div>
+      <div class="history-meta"><span id="config-diff-summary" class="muted">无差异</span></div>
+    </div>
+    <pre id="config-diff-preview" class="logs compact-log">暂无差异</pre>
   </section>
 </section>
 {{end}}

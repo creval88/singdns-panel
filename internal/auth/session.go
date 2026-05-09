@@ -11,11 +11,16 @@ import (
 type SessionManager struct {
 	cookieName string
 	mu         sync.RWMutex
-	sessions   map[string]string
+	sessions   map[string]sessionRecord
+}
+
+type sessionRecord struct {
+	Username  string
+	ExpiresAt time.Time
 }
 
 func NewSessionManager(cookieName string) *SessionManager {
-	return &SessionManager{cookieName: cookieName, sessions: map[string]string{}}
+	return &SessionManager{cookieName: cookieName, sessions: map[string]sessionRecord{}}
 }
 
 func (s *SessionManager) Create(w http.ResponseWriter, username string) error {
@@ -24,8 +29,10 @@ func (s *SessionManager) Create(w http.ResponseWriter, username string) error {
 		return err
 	}
 	token := hex.EncodeToString(buf)
+	expiresAt := time.Now().Add(24 * time.Hour)
 	s.mu.Lock()
-	s.sessions[token] = username
+	s.cleanupExpiredLocked(time.Now())
+	s.sessions[token] = sessionRecord{Username: username, ExpiresAt: expiresAt}
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
@@ -33,7 +40,8 @@ func (s *SessionManager) Create(w http.ResponseWriter, username string) error {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(24 * time.Hour),
+		Expires:  expiresAt,
+		MaxAge:   int((24 * time.Hour).Seconds()),
 	})
 	return nil
 }
@@ -44,9 +52,18 @@ func (s *SessionManager) Username(r *http.Request) (string, bool) {
 		return "", false
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	u, ok := s.sessions[cookie.Value]
-	return u, ok
+	rec, ok := s.sessions[cookie.Value]
+	s.mu.RUnlock()
+	if !ok {
+		return "", false
+	}
+	if time.Now().After(rec.ExpiresAt) {
+		s.mu.Lock()
+		delete(s.sessions, cookie.Value)
+		s.mu.Unlock()
+		return "", false
+	}
+	return rec.Username, true
 }
 
 func (s *SessionManager) Destroy(w http.ResponseWriter, r *http.Request) {
@@ -67,4 +84,12 @@ func (s *SessionManager) Require(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *SessionManager) cleanupExpiredLocked(now time.Time) {
+	for token, rec := range s.sessions {
+		if now.After(rec.ExpiresAt) {
+			delete(s.sessions, token)
+		}
+	}
 }

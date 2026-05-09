@@ -200,8 +200,251 @@ type IPForwardStatus struct {
 }
 
 func NewSingBoxService(cfg cfgpkg.ServiceConfig, systemd *SystemdService, panelConfigPath string) *SingBoxService {
-	cfg.BinPath = resolveSingBoxBinPath(cfg.BinPath)
+	cfg, _ = NormalizeSingBoxServiceConfig(cfg, systemd)
 	return &SingBoxService{cfg: cfg, systemd: systemd, panelConfigPath: strings.TrimSpace(panelConfigPath)}
+}
+
+func NormalizeSingBoxServiceConfig(cfg cfgpkg.ServiceConfig, systemd *SystemdService) (cfgpkg.ServiceConfig, bool) {
+	normalized := cfg
+	serviceBinary := detectSingBoxServiceBinary(cfg.ServiceName, systemd)
+	target := normalizeSingBoxBinPath(cfg.BinPath, serviceBinary)
+	changed := strings.TrimSpace(cfg.BinPath) != strings.TrimSpace(target)
+	normalized.BinPath = target
+	return normalized, changed
+}
+
+func detectSingBoxServiceBinary(serviceName string, systemd *SystemdService) string {
+	if systemd == nil {
+		return ""
+	}
+	serviceName = strings.TrimSpace(serviceName)
+	if serviceName == "" {
+		serviceName = "sing-box"
+	}
+	path, err := systemd.ExecStartBinary(serviceName)
+	if err != nil {
+		return ""
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if filepath.Base(path) != "sing-box" {
+		return ""
+	}
+	return path
+}
+
+func normalizeSingBoxBinPath(configured, serviceBinary string) string {
+	serviceBinary = strings.TrimSpace(serviceBinary)
+	if serviceBinary != "" {
+		if st, err := os.Stat(serviceBinary); err == nil && !st.IsDir() {
+			return serviceBinary
+		}
+		return serviceBinary
+	}
+	return resolveSingBoxBinPath(configured)
+}
+
+func candidateSingBoxBinaryPaths(paths ...string) []string {
+	out := make([]string, 0, len(paths)+2)
+	seen := map[string]struct{}{}
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			out = append(out, path)
+			continue
+		}
+		if strings.HasPrefix(path, "/") {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func (s *SingBoxService) BinPath() string {
+	return strings.TrimSpace(s.cfg.BinPath)
+}
+
+func (s *SingBoxService) CandidateBinaryPaths() []string {
+	serviceBinary := detectSingBoxServiceBinary(s.cfg.ServiceName, s.systemd)
+	runningBinary := ""
+	if path, err := s.runningBinaryPath(); err == nil {
+		runningBinary = path
+	}
+	return candidateSingBoxBinaryPaths(
+		s.cfg.BinPath,
+		serviceBinary,
+		runningBinary,
+		"/usr/bin/sing-box",
+		"/usr/local/bin/sing-box",
+	)
+}
+
+func buildSystemdExecStartOverride(target string, args []string) string {
+	fields := append([]string{strings.TrimSpace(target)}, args...)
+	return "[Service]\nExecStart=\nExecStart=" + strings.Join(fields, " ") + "\n"
+}
+
+func (s *SingBoxService) validateSwitchTargetBinary(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("缺少目标内核路径")
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("目标内核不存在: %w", err)
+	}
+	if st.IsDir() {
+		return fmt.Errorf("目标内核路径是目录: %s", path)
+	}
+	if _, err := utils.Run(10*time.Second, path, "version"); err == nil {
+		return nil
+	}
+	if _, err := runSudoNoPrompt(10*time.Second, path, "version"); err == nil {
+		return nil
+	}
+	return fmt.Errorf("目标内核无法执行 `version` 校验: %s", path)
+}
+
+func (s *SingBoxService) persistPanelBinPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" || strings.TrimSpace(s.panelConfigPath) == "" {
+		return nil
+	}
+	cfg, err := cfgpkg.Load(s.panelConfigPath)
+	if err != nil {
+		return err
+	}
+	cfg.Services.SingBox.BinPath = path
+	return cfg.Save(s.panelConfigPath)
+}
+
+func (s *SingBoxService) SwitchServiceBinary(target string) (*OperationResult, error) {
+	target = strings.TrimSpace(target)
+	if err := s.validateSwitchTargetBinary(target); err != nil {
+		return nil, err
+	}
+
+	fields, err := s.systemd.ExecStartFields(s.cfg.ServiceName)
+	if err != nil {
+		return nil, fmt.Errorf("读取 systemd 启动命令失败: %w", err)
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("未读取到 systemd ExecStart")
+	}
+
+	args := []string{}
+	if len(fields) > 1 {
+		args = append(args, fields[1:]...)
+	}
+	overrideDir := filepath.Join("/etc/systemd/system", s.cfg.ServiceName+".service.d")
+	overridePath := filepath.Join(overrideDir, "10-singdns-panel-binpath.conf")
+	overrideContent := buildSystemdExecStartOverride(target, args)
+
+	oldContent, readErr := os.ReadFile(overridePath)
+	hadOverride := readErr == nil
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return nil, fmt.Errorf("读取现有 systemd override 失败: %w", readErr)
+	}
+
+	tmpOverride, err := os.CreateTemp("", "singdns-panel-systemd-override-*")
+	if err != nil {
+		return nil, err
+	}
+	tmpOverridePath := tmpOverride.Name()
+	defer os.Remove(tmpOverridePath)
+	if _, err := tmpOverride.WriteString(overrideContent); err != nil {
+		tmpOverride.Close()
+		return nil, err
+	}
+	if err := tmpOverride.Close(); err != nil {
+		return nil, err
+	}
+
+	restorePrevious := func() error {
+		if hadOverride {
+			restoreFile, err := os.CreateTemp("", "singdns-panel-systemd-restore-*")
+			if err != nil {
+				return err
+			}
+			restorePath := restoreFile.Name()
+			if _, err := restoreFile.Write(oldContent); err != nil {
+				restoreFile.Close()
+				os.Remove(restorePath)
+				return err
+			}
+			if err := restoreFile.Close(); err != nil {
+				os.Remove(restorePath)
+				return err
+			}
+			defer os.Remove(restorePath)
+			if _, err := runSudoNoPrompt(10*time.Second, "/bin/mkdir", "-p", overrideDir); err != nil {
+				return err
+			}
+			if _, err := runSudoNoPrompt(10*time.Second, "/usr/bin/install", "-m", "644", restorePath, overridePath); err != nil {
+				return err
+			}
+		} else {
+			if _, err := runSudoNoPrompt(10*time.Second, "/bin/rm", "-f", overridePath); err != nil {
+				return err
+			}
+		}
+		if _, err := runSudoNoPrompt(10*time.Second, "/bin/systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+		if _, err := runSudoNoPrompt(20*time.Second, "/bin/systemctl", "restart", s.cfg.ServiceName); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if _, err := runSudoNoPrompt(10*time.Second, "/bin/mkdir", "-p", overrideDir); err != nil {
+		return nil, fmt.Errorf("创建 systemd override 目录失败: %w", err)
+	}
+	if _, err := runSudoNoPrompt(10*time.Second, "/usr/bin/install", "-m", "644", tmpOverridePath, overridePath); err != nil {
+		return nil, fmt.Errorf("写入 systemd override 失败: %w", err)
+	}
+	if _, err := runSudoNoPrompt(10*time.Second, "/bin/systemctl", "daemon-reload"); err != nil {
+		_ = restorePrevious()
+		return nil, fmt.Errorf("systemd daemon-reload 失败: %w", err)
+	}
+	if _, err := runSudoNoPrompt(20*time.Second, "/bin/systemctl", "restart", s.cfg.ServiceName); err != nil {
+		restoreErr := restorePrevious()
+		if restoreErr != nil {
+			return nil, fmt.Errorf("切换内核路径后重启失败，且回滚失败: restart_err=%v, rollback_err=%v", err, restoreErr)
+		}
+		return nil, fmt.Errorf("切换内核路径后重启失败，已回滚到原服务配置: %w", err)
+	}
+	runningBinary, err := s.runningBinaryPath()
+	if err != nil {
+		restoreErr := restorePrevious()
+		if restoreErr != nil {
+			return nil, fmt.Errorf("切换后读取运行路径失败，且回滚失败: verify_err=%v, rollback_err=%v", err, restoreErr)
+		}
+		return nil, fmt.Errorf("切换后读取运行路径失败，已回滚到原服务配置: %w", err)
+	}
+	if !sameBinaryPath(runningBinary, target) {
+		restoreErr := restorePrevious()
+		if restoreErr != nil {
+			return nil, fmt.Errorf("切换后运行路径仍为 %s，且回滚失败: %v", strings.TrimSpace(runningBinary), restoreErr)
+		}
+		return nil, fmt.Errorf("切换后运行路径仍为 %s，已回滚到原服务配置", strings.TrimSpace(runningBinary))
+	}
+
+	s.cfg.BinPath = target
+	msg := fmt.Sprintf("已将 sing-box 服务切换到 %s 并重启生效", target)
+	if err := s.persistPanelBinPath(target); err != nil {
+		msg += fmt.Sprintf("；注意：面板配置回写失败，下次启动会按 systemd 自动同步: %v", err)
+	}
+	return &OperationResult{Action: "singbox.switch_binary", Message: msg}, nil
 }
 
 func resolveSingBoxBinPath(configured string) string {
@@ -229,6 +472,54 @@ func resolveSingBoxBinPath(configured string) string {
 		return configured
 	}
 	return "/usr/bin/sing-box"
+}
+
+func (s *SingBoxService) runningBinaryPath() (string, error) {
+	pid, err := s.systemd.MainPID(s.cfg.ServiceName)
+	if err != nil {
+		return "", err
+	}
+	if pid <= 0 {
+		return "", fmt.Errorf("service %s is not running", s.cfg.ServiceName)
+	}
+	procPath := fmt.Sprintf("/proc/%d/exe", pid)
+	var lastPath string
+	var lastErr error
+	for i := 0; i < 12; i++ {
+		path, err := os.Readlink(procPath)
+		if err == nil {
+			path = strings.TrimSpace(path)
+			lastPath = path
+			if path != "" && !strings.Contains(path, "systemd-executor") {
+				return path, nil
+			}
+		} else {
+			lastErr = err
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	if strings.TrimSpace(lastPath) != "" {
+		return lastPath, nil
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("failed to resolve running binary for %s", s.cfg.ServiceName)
+}
+
+func sameBinaryPath(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return a == b
+	}
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(b); err == nil {
+		b = resolved
+	}
+	return a == b
 }
 
 func (s *SingBoxService) Status() (*ServiceStatus, error) { return s.systemd.Status(s.cfg.ServiceName) }

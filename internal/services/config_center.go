@@ -18,40 +18,51 @@ type ConfigCenterDraft struct {
 }
 
 type ConfigCenterOutbound struct {
-	ID        string         `json:"id"`
-	Tag       string         `json:"tag"`
-	Type      string         `json:"type"`
-	Enabled   bool           `json:"enabled"`
-	Members   []string       `json:"members,omitempty"`
-	Reference int            `json:"reference_count"`
-	Raw       map[string]any `json:"raw,omitempty"`
+	ID                        string         `json:"id"`
+	Tag                       string         `json:"tag"`
+	Type                      string         `json:"type"`
+	Enabled                   bool           `json:"enabled"`
+	Members                   []string       `json:"members,omitempty"`
+	FilterInclude             []string       `json:"filter_include,omitempty"`
+	FilterExclude             []string       `json:"filter_exclude,omitempty"`
+	Interval                  string         `json:"interval,omitempty"`
+	Tolerance                 int            `json:"tolerance,omitempty"`
+	IdleTimeout               string         `json:"idle_timeout,omitempty"`
+	InterruptExistConnections *bool          `json:"interrupt_exist_connections,omitempty"`
+	Reference                 int            `json:"reference_count"`
+	Raw                       map[string]any `json:"raw,omitempty"`
 }
 
 type ConfigCenterRuleSet struct {
-	ID        string         `json:"id"`
-	Tag       string         `json:"tag"`
-	Type      string         `json:"type"`
-	Format    string         `json:"format,omitempty"`
-	Source    string         `json:"source,omitempty"`
-	Enabled   bool           `json:"enabled"`
-	Reference int            `json:"reference_count"`
-	Raw       map[string]any `json:"raw,omitempty"`
+	ID             string         `json:"id"`
+	Tag            string         `json:"tag"`
+	Type           string         `json:"type"`
+	Format         string         `json:"format,omitempty"`
+	Source         string         `json:"source,omitempty"`
+	DownloadDetour string         `json:"download_detour,omitempty"`
+	Enabled        bool           `json:"enabled"`
+	Reference      int            `json:"reference_count"`
+	Raw            map[string]any `json:"raw,omitempty"`
 }
 
 type ConfigCenterRouteRule struct {
-	ID        string         `json:"id"`
-	Position  int            `json:"position"`
-	Type      string         `json:"type,omitempty"`
-	Outbound  string         `json:"outbound,omitempty"`
-	Action    string         `json:"action,omitempty"`
-	RuleSets  []string       `json:"rule_sets,omitempty"`
-	Inbound   []string       `json:"inbound,omitempty"`
-	Domain    []string       `json:"domain,omitempty"`
-	DomainSuf []string       `json:"domain_suffix,omitempty"`
-	IPCIDR    []string       `json:"ip_cidr,omitempty"`
-	Summary   string         `json:"summary"`
-	Enabled   bool           `json:"enabled"`
-	Raw       map[string]any `json:"raw,omitempty"`
+	ID          string         `json:"id"`
+	Position    int            `json:"position"`
+	Type        string         `json:"type,omitempty"`
+	Outbound    string         `json:"outbound,omitempty"`
+	Action      string         `json:"action,omitempty"`
+	ClashMode   string         `json:"clash_mode,omitempty"`
+	RuleSets    []string       `json:"rule_sets,omitempty"`
+	Inbound     []string       `json:"inbound,omitempty"`
+	Domain      []string       `json:"domain,omitempty"`
+	DomainSuf   []string       `json:"domain_suffix,omitempty"`
+	IPCIDR      []string       `json:"ip_cidr,omitempty"`
+	Network     []string       `json:"network,omitempty"`
+	Port        string         `json:"port,omitempty"`
+	IPIsPrivate *bool          `json:"ip_is_private,omitempty"`
+	Summary     string         `json:"summary"`
+	Enabled     bool           `json:"enabled"`
+	Raw         map[string]any `json:"raw,omitempty"`
 }
 
 type ConfigCenterOverview struct {
@@ -70,10 +81,38 @@ type ConfigCenterOverviewCounts struct {
 }
 
 type ConfigCenterValidation struct {
-	OK       bool     `json:"ok"`
-	Errors   []string `json:"errors"`
-	Warnings []string `json:"warnings"`
-	CanApply bool     `json:"can_apply"`
+	OK       bool                       `json:"ok"`
+	Errors   []string                   `json:"errors"`
+	Warnings []string                   `json:"warnings"`
+	CanApply bool                       `json:"can_apply"`
+	Risk     *ConfigRiskReport          `json:"risk,omitempty"`
+	Summary  *ConfigCenterChangeSummary `json:"summary,omitempty"`
+}
+
+type ConfigCenterChangeSummary struct {
+	Changed          bool `json:"changed"`
+	OldBytes         int  `json:"old_bytes"`
+	NewBytes         int  `json:"new_bytes"`
+	OutboundsBefore  int  `json:"outbounds_before"`
+	OutboundsAfter   int  `json:"outbounds_after"`
+	RuleSetsBefore   int  `json:"rule_sets_before"`
+	RuleSetsAfter    int  `json:"rule_sets_after"`
+	RouteRulesBefore int  `json:"route_rules_before"`
+	RouteRulesAfter  int  `json:"route_rules_after"`
+}
+
+type ConfigCenterSaveResult struct {
+	Action     string                     `json:"action"`
+	Message    string                     `json:"message"`
+	BackupName string                     `json:"backup_name,omitempty"`
+	Bytes      int                        `json:"bytes"`
+	Risk       *ConfigRiskReport          `json:"risk,omitempty"`
+	Validation *ConfigCenterValidation    `json:"validation,omitempty"`
+	Summary    *ConfigCenterChangeSummary `json:"summary,omitempty"`
+}
+
+func (r ConfigCenterSaveResult) AuditText() string {
+	return strings.TrimSpace(r.Message)
 }
 
 func (s *SingBoxService) ConfigCenterDraftFromCurrent() (*ConfigCenterDraft, error) {
@@ -128,6 +167,12 @@ func (s *SingBoxService) ValidateConfigCenterContent(content string) (*ConfigCen
 		result.OK = false
 		result.CanApply = false
 	}
+	if risk, err := s.ConfigRiskReport(content); err == nil {
+		result.Risk = risk
+	}
+	if summary, err := s.configCenterChangeSummary(content); err == nil {
+		result.Summary = summary
+	}
 	return result, nil
 }
 
@@ -150,6 +195,11 @@ func (s *SingBoxService) BuildConfigCenterContentFromDraft(draft *ConfigCenterDr
 		delete(m, "tag")
 		delete(m, "type")
 		delete(m, "outbounds")
+		delete(m, "filter")
+		delete(m, "interval")
+		delete(m, "tolerance")
+		delete(m, "idle_timeout")
+		delete(m, "interrupt_exist_connections")
 		if strings.TrimSpace(item.Tag) != "" {
 			m["tag"] = strings.TrimSpace(item.Tag)
 		}
@@ -168,6 +218,30 @@ func (s *SingBoxService) BuildConfigCenterContentFromDraft(draft *ConfigCenterDr
 				m["outbounds"] = vals
 			}
 		}
+		if len(item.FilterInclude) > 0 || len(item.FilterExclude) > 0 {
+			filter := map[string]any{}
+			if vals := stringsToAny(item.FilterInclude); len(vals) > 0 {
+				filter["include"] = vals
+			}
+			if vals := stringsToAny(item.FilterExclude); len(vals) > 0 {
+				filter["exclude"] = vals
+			}
+			if len(filter) > 0 {
+				m["filter"] = filter
+			}
+		}
+		if strings.TrimSpace(item.Interval) != "" {
+			m["interval"] = strings.TrimSpace(item.Interval)
+		}
+		if item.Tolerance > 0 {
+			m["tolerance"] = item.Tolerance
+		}
+		if strings.TrimSpace(item.IdleTimeout) != "" {
+			m["idle_timeout"] = strings.TrimSpace(item.IdleTimeout)
+		}
+		if item.InterruptExistConnections != nil {
+			m["interrupt_exist_connections"] = *item.InterruptExistConnections
+		}
 		outbounds = append(outbounds, m)
 	}
 	root["outbounds"] = outbounds
@@ -184,6 +258,7 @@ func (s *SingBoxService) BuildConfigCenterContentFromDraft(draft *ConfigCenterDr
 		delete(m, "format")
 		delete(m, "url")
 		delete(m, "path")
+		delete(m, "download_detour")
 		if strings.TrimSpace(item.Tag) != "" {
 			m["tag"] = strings.TrimSpace(item.Tag)
 		}
@@ -199,6 +274,9 @@ func (s *SingBoxService) BuildConfigCenterContentFromDraft(draft *ConfigCenterDr
 			} else {
 				m["path"] = src
 			}
+		}
+		if strings.TrimSpace(item.DownloadDetour) != "" {
+			m["download_detour"] = strings.TrimSpace(item.DownloadDetour)
 		}
 		ruleSets = append(ruleSets, m)
 	}
@@ -216,6 +294,10 @@ func (s *SingBoxService) BuildConfigCenterContentFromDraft(draft *ConfigCenterDr
 		delete(m, "outbound")
 		delete(m, "action")
 		delete(m, "method")
+		delete(m, "clash_mode")
+		delete(m, "network")
+		delete(m, "port")
+		delete(m, "ip_is_private")
 		if strings.TrimSpace(item.Type) != "" {
 			m["type"] = strings.TrimSpace(item.Type)
 		}
@@ -250,6 +332,20 @@ func (s *SingBoxService) BuildConfigCenterContentFromDraft(draft *ConfigCenterDr
 		if strings.TrimSpace(item.Action) != "" {
 			m["action"] = strings.TrimSpace(item.Action)
 		}
+		if strings.TrimSpace(item.ClashMode) != "" {
+			m["clash_mode"] = strings.TrimSpace(item.ClashMode)
+		}
+		if vals := stringsToAny(item.Network); len(vals) == 1 {
+			m["network"] = vals[0]
+		} else if len(vals) > 1 {
+			m["network"] = vals
+		}
+		if portVal := portValueFromString(item.Port); portVal != nil {
+			m["port"] = portVal
+		}
+		if item.IPIsPrivate != nil {
+			m["ip_is_private"] = *item.IPIsPrivate
+		}
 		rules = append(rules, m)
 	}
 	routeMap["rules"] = rules
@@ -263,6 +359,14 @@ func (s *SingBoxService) BuildConfigCenterContentFromDraft(draft *ConfigCenterDr
 }
 
 func (s *SingBoxService) SaveConfigCenterDraft(draft *ConfigCenterDraft) (*OperationResult, error) {
+	result, err := s.SaveConfigCenterDraftDetailed(draft)
+	if err != nil {
+		return nil, err
+	}
+	return &OperationResult{Action: result.Action, Message: result.Message}, nil
+}
+
+func (s *SingBoxService) SaveConfigCenterDraftDetailed(draft *ConfigCenterDraft) (*ConfigCenterSaveResult, error) {
 	validation := ValidateConfigCenterDraft(draft)
 	if !validation.OK {
 		return nil, fmt.Errorf("草稿校验失败: %s", strings.Join(validation.Errors, "; "))
@@ -271,7 +375,61 @@ func (s *SingBoxService) SaveConfigCenterDraft(draft *ConfigCenterDraft) (*Opera
 	if err != nil {
 		return nil, err
 	}
-	return s.SaveConfig(content)
+	if err := s.ValidateConfig(content); err != nil {
+		return nil, err
+	}
+	risk, _ := s.ConfigRiskReport(content)
+	summary, _ := s.configCenterChangeSummary(content)
+	validation.Risk = risk
+	validation.Summary = summary
+
+	backupName, err := s.CreateBackup()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.writeConfigFile(content); err != nil {
+		return nil, err
+	}
+	s.PruneBackups(20)
+	msg := fmt.Sprintf("配置中心草稿已保存，写入 %d 字节", len(content))
+	if backupName != "" {
+		msg += "，已备份为 " + backupName
+	}
+	return &ConfigCenterSaveResult{
+		Action:     "config_center.save",
+		Message:    msg,
+		BackupName: backupName,
+		Bytes:      len(content),
+		Risk:       risk,
+		Validation: validation,
+		Summary:    summary,
+	}, nil
+}
+
+func (s *SingBoxService) configCenterChangeSummary(newContent string) (*ConfigCenterChangeSummary, error) {
+	oldContent, err := s.ReadConfig()
+	if err != nil {
+		return nil, err
+	}
+	oldDraft, err := s.ParseConfigCenterDraft(oldContent)
+	if err != nil {
+		return nil, err
+	}
+	newDraft, err := s.ParseConfigCenterDraft(newContent)
+	if err != nil {
+		return nil, err
+	}
+	return &ConfigCenterChangeSummary{
+		Changed:          normalizeConfigText(oldContent) != normalizeConfigText(newContent),
+		OldBytes:         len(oldContent),
+		NewBytes:         len(newContent),
+		OutboundsBefore:  len(oldDraft.Outbounds),
+		OutboundsAfter:   len(newDraft.Outbounds),
+		RuleSetsBefore:   len(oldDraft.RuleSets),
+		RuleSetsAfter:    len(newDraft.RuleSets),
+		RouteRulesBefore: len(oldDraft.RouteRules),
+		RouteRulesAfter:  len(newDraft.RouteRules),
+	}, nil
 }
 
 func (s *SingBoxService) ParseConfigCenterDraft(content string) (*ConfigCenterDraft, error) {
@@ -298,12 +456,18 @@ func (s *SingBoxService) ParseConfigCenterDraft(content string) (*ConfigCenterDr
 			typeName := stringValue(m["type"])
 			members := stringSliceValue(m["outbounds"])
 			draft.Outbounds = append(draft.Outbounds, ConfigCenterOutbound{
-				ID:      fmt.Sprintf("ob-%d", i+1),
-				Tag:     tag,
-				Type:    typeName,
-				Enabled: true,
-				Members: members,
-				Raw:     cloneMap(m),
+				ID:                        fmt.Sprintf("ob-%d", i+1),
+				Tag:                       tag,
+				Type:                      typeName,
+				Enabled:                   true,
+				Members:                   members,
+				FilterInclude:             trimStrings(parseFilterInclude(m["filter"])),
+				FilterExclude:             trimStrings(parseFilterExclude(m["filter"])),
+				Interval:                  stringValue(m["interval"]),
+				Tolerance:                 intValue(m["tolerance"]),
+				IdleTimeout:               stringValue(m["idle_timeout"]),
+				InterruptExistConnections: boolPtrValue(m["interrupt_exist_connections"]),
+				Raw:                       cloneMap(m),
 			})
 			for _, member := range members {
 				if strings.TrimSpace(member) != "" && member != "{all}" {
@@ -326,13 +490,14 @@ func (s *SingBoxService) ParseConfigCenterDraft(content string) (*ConfigCenterDr
 				source = stringValue(m["path"])
 			}
 			draft.RuleSets = append(draft.RuleSets, ConfigCenterRuleSet{
-				ID:      fmt.Sprintf("rs-%d", i+1),
-				Tag:     tag,
-				Type:    stringValue(m["type"]),
-				Format:  stringValue(m["format"]),
-				Source:  source,
-				Enabled: true,
-				Raw:     cloneMap(m),
+				ID:             fmt.Sprintf("rs-%d", i+1),
+				Tag:            tag,
+				Type:           stringValue(m["type"]),
+				Format:         stringValue(m["format"]),
+				Source:         source,
+				DownloadDetour: stringValue(m["download_detour"]),
+				Enabled:        true,
+				Raw:            cloneMap(m),
 			})
 		}
 	}
@@ -353,18 +518,22 @@ func (s *SingBoxService) ParseConfigCenterDraft(content string) (*ConfigCenterDr
 				}
 			}
 			rule := ConfigCenterRouteRule{
-				ID:        fmt.Sprintf("rr-%d", i+1),
-				Position:  i + 1,
-				Type:      stringValue(m["type"]),
-				Outbound:  outbound,
-				Action:    firstNonEmpty(stringValue(m["action"]), stringValue(m["method"])),
-				RuleSets:  ruleSets,
-				Inbound:   stringOrSlice(m["inbound"]),
-				Domain:    stringOrSlice(m["domain"]),
-				DomainSuf: stringOrSlice(m["domain_suffix"]),
-				IPCIDR:    stringOrSlice(m["ip_cidr"]),
-				Enabled:   true,
-				Raw:       cloneMap(m),
+				ID:          fmt.Sprintf("rr-%d", i+1),
+				Position:    i + 1,
+				Type:        stringValue(m["type"]),
+				Outbound:    outbound,
+				Action:      firstNonEmpty(stringValue(m["action"]), stringValue(m["method"])),
+				ClashMode:   stringValue(m["clash_mode"]),
+				RuleSets:    ruleSets,
+				Inbound:     stringOrSlice(m["inbound"]),
+				Domain:      stringOrSlice(m["domain"]),
+				DomainSuf:   stringOrSlice(m["domain_suffix"]),
+				IPCIDR:      stringOrSlice(m["ip_cidr"]),
+				Network:     stringOrSlice(m["network"]),
+				Port:        scalarString(m["port"]),
+				IPIsPrivate: boolPtrValue(m["ip_is_private"]),
+				Enabled:     true,
+				Raw:         cloneMap(m),
 			}
 			rule.Summary = summarizeRouteRule(rule)
 			draft.RouteRules = append(draft.RouteRules, rule)
@@ -395,7 +564,9 @@ func ValidateConfigCenterDraft(draft *ConfigCenterDraft) *ConfigCenterValidation
 	for _, item := range draft.Outbounds {
 		tag := strings.TrimSpace(item.Tag)
 		if tag == "" {
-			result.Errors = append(result.Errors, "存在未命名 outbound")
+			if strings.TrimSpace(item.Type) == "" {
+				result.Warnings = append(result.Warnings, "存在未命名且未声明类型的 outbound")
+			}
 			continue
 		}
 		if _, ok := outboundTags[tag]; ok {
@@ -465,6 +636,18 @@ func summarizeRouteRule(rule ConfigCenterRouteRule) string {
 	if len(parts) == 0 && rule.Type != "" {
 		parts = append(parts, "type="+rule.Type)
 	}
+	if strings.TrimSpace(rule.ClashMode) != "" {
+		parts = append(parts, "clash_mode="+rule.ClashMode)
+	}
+	if len(rule.Network) > 0 {
+		parts = append(parts, "network="+strings.Join(rule.Network, ", "))
+	}
+	if strings.TrimSpace(rule.Port) != "" {
+		parts = append(parts, "port="+rule.Port)
+	}
+	if rule.IPIsPrivate != nil {
+		parts = append(parts, fmt.Sprintf("ip_is_private=%t", *rule.IPIsPrivate))
+	}
 	if len(parts) == 0 {
 		parts = append(parts, "通用规则")
 	}
@@ -491,11 +674,111 @@ func stringSliceValue(v any) []string {
 	return out
 }
 
+func trimStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func stringOrSlice(v any) []string {
 	if s := stringValue(v); s != "" {
 		return []string{s}
 	}
 	return stringSliceValue(v)
+}
+
+func scalarString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x)
+	case json.Number:
+		return strings.TrimSpace(x.String())
+	case float64:
+		if x == float64(int64(x)) {
+			return fmt.Sprintf("%d", int64(x))
+		}
+		return strings.TrimSpace(fmt.Sprintf("%v", x))
+	case float32:
+		if x == float32(int64(x)) {
+			return fmt.Sprintf("%d", int64(x))
+		}
+		return strings.TrimSpace(fmt.Sprintf("%v", x))
+	case int, int8, int16, int32, int64:
+		return strings.TrimSpace(fmt.Sprintf("%d", x))
+	case uint, uint8, uint16, uint32, uint64:
+		return strings.TrimSpace(fmt.Sprintf("%d", x))
+	default:
+		return ""
+	}
+}
+
+func intValue(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int8:
+		return int(x)
+	case int16:
+		return int(x)
+	case int32:
+		return int(x)
+	case int64:
+		return int(x)
+	case uint:
+		return int(x)
+	case uint8:
+		return int(x)
+	case uint16:
+		return int(x)
+	case uint32:
+		return int(x)
+	case uint64:
+		return int(x)
+	case float64:
+		return int(x)
+	case json.Number:
+		n, _ := x.Int64()
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+func boolPtrValue(v any) *bool {
+	b, ok := v.(bool)
+	if !ok {
+		return nil
+	}
+	out := b
+	return &out
+}
+
+func parseFilterInclude(v any) []string {
+	includes, _ := parseFilterRules(v)
+	return includes
+}
+
+func parseFilterExclude(v any) []string {
+	_, excludes := parseFilterRules(v)
+	return excludes
+}
+
+func portValueFromString(v string) any {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	if !strings.ContainsAny(v, "-,: ") {
+		if n := intValue(json.Number(v)); n > 0 {
+			return n
+		}
+	}
+	return v
 }
 
 func firstNonEmpty(values ...string) string {

@@ -85,6 +85,21 @@ func (a *App) ConfigCenterSaveAPI(w http.ResponseWriter, r *http.Request) {
 		respondMessage(w, http.ErrBodyNotAllowed, "")
 		return
 	}
-	res, err := a.SingBox.SaveConfigCenterDraft(in.Draft)
-	a.respondAudited(w, r, "singbox.config_center.save", res, err, "配置中心草稿已保存")
+	res, err := a.SingBox.SaveConfigCenterDraftDetailed(in.Draft)
+	if err != nil {
+		a.auditFromRequest(r, "singbox.config_center.save", err)
+		respondMessage(w, err, "")
+		return
+	}
+	a.auditMessageFromRequest(r, "singbox.config_center.save", res.AuditText())
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":          true,
+		"message":     res.Message,
+		"backup_name": res.BackupName,
+		"bytes":       res.Bytes,
+		"risk":        res.Risk,
+		"validation":  res.Validation,
+		"summary":     res.Summary,
+	})
 }

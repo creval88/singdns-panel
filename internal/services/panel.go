@@ -66,15 +66,38 @@ type RemoteProbeResult struct {
 }
 
 type UpgradeTask struct {
-	ID          string `json:"id"`
-	Kind        string `json:"kind"`
-	Status      string `json:"status"` // pending|running|success|failed
-	Message     string `json:"message"`
-	Version     string `json:"version,omitempty"`
-	ReleasePath string `json:"release_path,omitempty"`
-	StartedAt   string `json:"started_at,omitempty"`
-	FinishedAt  string `json:"finished_at,omitempty"`
-	Error       string `json:"error,omitempty"`
+	ID          string                 `json:"id"`
+	Kind        string                 `json:"kind"`
+	Status      string                 `json:"status"` // pending|running|success|failed
+	Message     string                 `json:"message"`
+	Version     string                 `json:"version,omitempty"`
+	ReleasePath string                 `json:"release_path,omitempty"`
+	StartedAt   string                 `json:"started_at,omitempty"`
+	FinishedAt  string                 `json:"finished_at,omitempty"`
+	Error       string                 `json:"error,omitempty"`
+	Preflight   *PanelUpgradePreflight `json:"preflight,omitempty"`
+	Steps       []UpgradeTaskStep      `json:"steps,omitempty"`
+}
+
+type UpgradeTaskStep struct {
+	Time    string `json:"time"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+type PanelPreflightCheck struct {
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+	Level   string `json:"level"`
+}
+
+type PanelUpgradePreflight struct {
+	OK      bool                  `json:"ok"`
+	Kind    string                `json:"kind"`
+	Message string                `json:"message"`
+	Checks  []PanelPreflightCheck `json:"checks"`
 }
 
 func NewPanelService(version string, cfg cfgpkg.PanelUpdateConfig) *PanelService {
@@ -174,8 +197,11 @@ func (p *PanelService) inspectRelease(path, name string) (*PanelReleaseInfo, err
 func (p *PanelService) Upgrade() error {
 	cmd := strings.TrimSpace(p.cfg.UpgradeCommand)
 	if cmd != "" {
-		_, err := utils.RunShell(10*time.Minute, cmd)
-		return err
+		res, err := utils.RunShell(10*time.Minute, cmd)
+		if err != nil {
+			return fmt.Errorf("执行自定义升级命令失败: %w%s", err, formatCommandOutput(res))
+		}
+		return nil
 	}
 	rel, err := p.LatestLocalRelease()
 	if err != nil {
@@ -190,19 +216,115 @@ func (p *PanelService) Upgrade() error {
 	return p.upgradeFromRelease(rel)
 }
 
+func (p *PanelService) UpgradePreflight(kind string) (*PanelUpgradePreflight, error) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "local"
+	}
+	out := &PanelUpgradePreflight{OK: true, Kind: kind, Message: "升级前检查通过"}
+	add := func(name string, ok bool, level, msg string) {
+		if strings.TrimSpace(level) == "" {
+			if ok {
+				level = "ok"
+			} else {
+				level = "bad"
+			}
+		}
+		out.Checks = append(out.Checks, PanelPreflightCheck{Name: name, OK: ok, Level: level, Message: msg})
+		if !ok && level != "warn" {
+			out.OK = false
+		}
+	}
+
+	p.mu.RLock()
+	cfg := p.cfg
+	p.mu.RUnlock()
+
+	releaseDir := strings.TrimSpace(cfg.ReleaseDir)
+	if releaseDir == "" {
+		add("升级目录", false, "bad", "未配置 panel_update.release_dir")
+	} else if err := os.MkdirAll(releaseDir, 0755); err != nil {
+		add("升级目录", false, "bad", "无法创建或访问升级目录: "+err.Error())
+	} else if st, err := os.Stat(releaseDir); err != nil || !st.IsDir() {
+		add("升级目录", false, "bad", "升级目录不可用")
+	} else {
+		add("升级目录", true, "ok", releaseDir)
+	}
+
+	add("当前版本", true, "ok", p.CurrentVersion())
+
+	switch kind {
+	case "local":
+		if strings.TrimSpace(cfg.UpgradeCommand) != "" {
+			add("升级命令", true, "warn", "将执行自定义 upgrade_command；请确认命令自身包含备份与回滚逻辑")
+			break
+		}
+		rel, err := p.LatestLocalRelease()
+		if err != nil {
+			add("本地发布包", false, "bad", err.Error())
+			break
+		}
+		if rel == nil {
+			add("本地发布包", false, "bad", "未发现可用本地发布包")
+			break
+		}
+		add("本地发布包", rel.HasUpgrade, "", fmt.Sprintf("%s · %s", rel.Version, rel.Path))
+		add("升级脚本", rel.HasScript, "", filepath.Join(rel.Path, "upgrade.sh"))
+		add("面板二进制", rel.HasBinary, "", filepath.Join(rel.Path, "bin", "singdns-panel"))
+	case "remote":
+		probe, err := p.ProbeRemoteRelease()
+		if err != nil {
+			add("远程更新源", false, "bad", err.Error())
+			break
+		}
+		add("远程更新源", true, "ok", fmt.Sprintf("%s/%s · %s", probe.Channel, probe.Arch, probe.ManifestURL))
+		add("远程版本", strings.TrimSpace(probe.Version) != "", "", blankAsUnknown(probe.Version))
+		add("下载链接", probe.PackageOK, "", probe.PackageMessage)
+		if strings.TrimSpace(probe.SHA256) == "" {
+			add("SHA256", true, "warn", "manifest 未提供 sha256；仍可升级，但无法校验包完整性")
+		} else {
+			add("SHA256", true, "ok", "manifest 已提供 sha256")
+		}
+	default:
+		add("升级类型", false, "bad", "未知升级类型: "+kind)
+	}
+
+	if !out.OK {
+		out.Message = "升级前检查未通过"
+	}
+	return out, nil
+}
+
 func (p *PanelService) upgradeFromRelease(rel *PanelReleaseInfo) error {
 	upgradeScript := filepath.Join(rel.Path, "upgrade.sh")
 	if _, err := os.Stat(upgradeScript); err != nil {
 		return fmt.Errorf("升级包缺少脚本: %s", upgradeScript)
 	}
 
-	if _, err := utils.Run(5*time.Minute, "sudo", "bash", upgradeScript); err != nil {
-		return fmt.Errorf("执行升级脚本失败: %w", err)
+	if res, err := utils.Run(5*time.Minute, "sudo", "bash", upgradeScript); err != nil {
+		return fmt.Errorf("执行升级脚本失败: %w%s", err, formatCommandOutput(res))
 	}
-	if _, err := utils.Run(20*time.Second, "sudo", "systemctl", "is-active", "--quiet", "singdns-panel"); err != nil {
-		return fmt.Errorf("升级后服务未正常运行: %w", err)
+	if res, err := utils.Run(20*time.Second, "sudo", "systemctl", "is-active", "--quiet", "singdns-panel"); err != nil {
+		return fmt.Errorf("升级后服务未正常运行: %w%s", err, formatCommandOutput(res))
 	}
 	return nil
+}
+
+func formatCommandOutput(res *utils.CommandResult) string {
+	if res == nil {
+		return ""
+	}
+	parts := []string{}
+	if stdout := strings.TrimSpace(res.Stdout); stdout != "" {
+		parts = append(parts, "stdout:\n"+stdout)
+	}
+	if stderr := strings.TrimSpace(res.Stderr); stderr != "" {
+		parts = append(parts, "stderr:\n"+stderr)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(parts, "\n")
 }
 
 func (p *PanelService) ResolveRemoteRelease() (*RemoteReleaseInfo, error) {
@@ -390,6 +512,13 @@ func asString(v any) string {
 	return strings.TrimSpace(s)
 }
 
+func blankAsUnknown(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "未知"
+	}
+	return strings.TrimSpace(v)
+}
+
 func (p *PanelService) DownloadAndExtract(downloadURL string) (*PanelReleaseInfo, error) {
 	return p.DownloadAndExtractWithSHA(downloadURL, "")
 }
@@ -529,6 +658,7 @@ func (p *PanelService) NewTask(kind, version, releasePath string) *UpgradeTask {
 		Version:     strings.TrimSpace(version),
 		ReleasePath: strings.TrimSpace(releasePath),
 		StartedAt:   time.Now().Format(time.RFC3339),
+		Steps:       []UpgradeTaskStep{{Time: time.Now().Format(time.RFC3339), Status: "pending", Message: "任务已创建"}},
 	}
 	p.mu.Lock()
 	p.tasks[t.ID] = t
@@ -554,6 +684,33 @@ func (p *PanelService) MarkTaskRunning(taskID, msg string) {
 		if strings.TrimSpace(msg) != "" {
 			t.Message = msg
 		}
+		t.Steps = append(t.Steps, UpgradeTaskStep{Time: time.Now().Format(time.RFC3339), Status: "running", Message: t.Message})
+	}
+}
+
+func (p *PanelService) MarkTaskPreflight(taskID string, preflight *PanelUpgradePreflight) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.tasks[taskID]; ok {
+		t.Preflight = preflight
+		if preflight != nil {
+			status := "ok"
+			if !preflight.OK {
+				status = "failed"
+			}
+			t.Steps = append(t.Steps, UpgradeTaskStep{Time: time.Now().Format(time.RFC3339), Status: status, Message: preflight.Message, Detail: panelPreflightDetail(preflight)})
+		}
+	}
+}
+
+func (p *PanelService) MarkTaskStep(taskID, status, msg, detail string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.tasks[taskID]; ok {
+		t.Steps = append(t.Steps, UpgradeTaskStep{Time: time.Now().Format(time.RFC3339), Status: strings.TrimSpace(status), Message: strings.TrimSpace(msg), Detail: strings.TrimSpace(detail)})
+		if strings.TrimSpace(msg) != "" {
+			t.Message = strings.TrimSpace(msg)
+		}
 	}
 }
 
@@ -569,6 +726,7 @@ func (p *PanelService) MarkTaskSuccess(taskID, msg string) {
 		}
 		t.FinishedAt = time.Now().Format(time.RFC3339)
 		t.Error = ""
+		t.Steps = append(t.Steps, UpgradeTaskStep{Time: t.FinishedAt, Status: "success", Message: t.Message})
 	}
 }
 
@@ -584,7 +742,27 @@ func (p *PanelService) MarkTaskFailed(taskID string, err error) {
 		} else {
 			t.Message = "升级失败"
 		}
+		t.Steps = append(t.Steps, UpgradeTaskStep{Time: t.FinishedAt, Status: "failed", Message: t.Message, Detail: t.Error})
 	}
+}
+
+func panelPreflightDetail(preflight *PanelUpgradePreflight) string {
+	if preflight == nil {
+		return ""
+	}
+	lines := make([]string, 0, len(preflight.Checks))
+	for _, check := range preflight.Checks {
+		mark := "OK"
+		if !check.OK {
+			if check.Level == "warn" {
+				mark = "WARN"
+			} else {
+				mark = "FAIL"
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s %s: %s", mark, check.Name, check.Message))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func cloneTask(t *UpgradeTask) *UpgradeTask {
@@ -592,5 +770,8 @@ func cloneTask(t *UpgradeTask) *UpgradeTask {
 		return nil
 	}
 	cp := *t
+	if t.Steps != nil {
+		cp.Steps = append([]UpgradeTaskStep{}, t.Steps...)
+	}
 	return &cp
 }

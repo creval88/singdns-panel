@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"singdns-panel/internal/auth"
@@ -29,8 +30,28 @@ func (a *App) CSRFMiddleware(next http.Handler) http.Handler {
 }
 
 func sameOrigin(r *http.Request) bool {
-	host := r.Host
 	origin := r.Header.Get("Origin")
 	referer := r.Header.Get("Referer")
-	return (origin != "" && strings.Contains(origin, host)) || (referer != "" && strings.Contains(referer, host))
+	if origin != "" {
+		return requestHostMatchesURL(r.Host, origin)
+	}
+	if referer != "" {
+		return requestHostMatchesURL(r.Host, referer)
+	}
+	return false
+}
+
+func requestHostMatchesURL(host, rawURL string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.TrimSpace(rawURL) == "" {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
 }

@@ -50,6 +50,9 @@
 <script>
 let currentSbTab = 'overview';
 let singboxUpgradeBusy = false;
+const draftKey = 'singdns-panel:singbox:draft';
+let lastServerConfig = document.getElementById('config') ? document.getElementById('config').value : '';
+let serverChangedWhileDirty = false;
 
 function showSbTab(name, btn) {
   currentSbTab = name || 'overview';
@@ -202,6 +205,67 @@ function renderNodeSubscriptionResults(list) {
   `).join('');
 }
 
+function subscriptionModeText(mode) {
+  if (mode === 'nodes_template') return '节点模板合并';
+  if (mode === 'full_config') return '完整配置订阅';
+  return '待生成';
+}
+
+function subscriptionSourceText(source) {
+  if (source === 'subscription') return '订阅节点';
+  if (source === 'manual') return '手动节点';
+  return '待确认';
+}
+
+function subscriptionSourceBadgeClass(source) {
+  if (source === 'subscription') return 'badge-ok';
+  if (source === 'manual') return 'badge-warn';
+  return '';
+}
+
+function renderSubscriptionSources(sources) {
+  const s = sources || {};
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v ?? ''); };
+  setText('subscription-source-mode', subscriptionModeText(s.active_mode || ''));
+  setText('subscription-source-managed', s.managed_node_count || 0);
+  setText('subscription-source-manual', s.manual_node_count || 0);
+  setText('subscription-source-subscription', s.subscription_count || 0);
+  setText('subscription-source-selfbuilt', s.self_built_count || 0);
+  setText('subscription-source-groups', s.matched_group_count || 0);
+
+  const noteEl = document.getElementById('subscription-source-note-list');
+  if (noteEl) {
+    const notes = Array.isArray(s.notes) ? s.notes : [];
+    noteEl.innerHTML = notes.length
+      ? notes.map((note) => `<div class="backup-item backup-item-compact source-note-item"><div><div class="backup-name">${escapeHTML(String(note || ''))}</div></div></div>`).join('')
+      : '<div class="muted empty-text">暂无补充说明</div>';
+  }
+
+  const nodeEl = document.getElementById('subscription-source-node-list');
+  if (!nodeEl) return;
+  const nodes = Array.isArray(s.nodes) ? s.nodes : [];
+  if (!nodes.length) {
+    nodeEl.innerHTML = '<div class="muted empty-text">暂无活动托管节点</div>';
+    return;
+  }
+  nodeEl.innerHTML = nodes.map((node) => {
+    const groups = Array.isArray(node.groups) && node.groups.length ? (' · 分组 ' + node.groups.map((item) => escapeHTML(String(item || ''))).join(' / ')) : '';
+    const selfBuiltBadge = node.self_built ? '<span class="badge badge-plain source-badge-selfbuilt">自建节点</span>' : '';
+    return `
+      <div class="backup-item backup-item-compact source-node-item">
+        <div>
+          <div class="backup-name">${escapeHTML(node.tag || '')}</div>
+          <div class="muted">${escapeHTML(node.type || '-')} ${(node.server ? ('· ' + escapeHTML(node.server)) : '')}${groups}</div>
+        </div>
+        <div class="source-badges">
+          <span class="badge badge-plain ${subscriptionSourceBadgeClass(node.source || '')}">${subscriptionSourceText(node.source || '')}</span>
+          ${selfBuiltBadge}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 function renderManualSummary(result) {
   const r = result || {};
   const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v ?? ''); };
@@ -252,12 +316,105 @@ let templateConfigEditing = false;
 
 function getTemplateEl() { return document.getElementById('template-config'); }
 function getConfigEl() { return document.getElementById('config'); }
+function getCurrentDraft() {
+  const el = getConfigEl();
+  return el ? el.value : '';
+}
 function markTemplateConfigDirty() { templateConfigDirty = true; }
 function clearTemplateConfigDirty() { templateConfigDirty = false; }
 function isTemplateConfigProtected() {
   const el = getTemplateEl();
   if (!el) return false;
   return templateConfigDirty || templateConfigEditing || document.activeElement === el;
+}
+function isDirtyDraft() {
+  return getCurrentDraft() !== lastServerConfig;
+}
+function persistLocalDraft() {
+  try {
+    const draft = getCurrentDraft();
+    if (!draft || draft === lastServerConfig) {
+      localStorage.removeItem(draftKey);
+      return;
+    }
+    localStorage.setItem(draftKey, draft);
+  } catch (_) {}
+}
+function restoreLocalDraft() {
+  const el = getConfigEl();
+  if (!el) return;
+  try {
+    const saved = localStorage.getItem(draftKey);
+    if (saved && saved !== lastServerConfig) {
+      el.value = saved;
+      toast('已恢复浏览器本地草稿');
+    }
+  } catch (_) {}
+}
+function resetLocalDraft() {
+  const el = getConfigEl();
+  if (!el) return;
+  if (!confirm('确认丢弃浏览器本地草稿并恢复到服务器当前配置？')) return;
+  el.value = lastServerConfig;
+  serverChangedWhileDirty = false;
+  persistLocalDraft();
+  updateConfigDirtyState();
+  renderDraftDiff();
+  toast('已丢弃本地草稿');
+}
+function updateConfigDirtyState() {
+  const dirtyBox = document.getElementById('config-dirty-state');
+  const conflictBox = document.getElementById('config-conflict-state');
+  if (dirtyBox) {
+    const dirty = isDirtyDraft();
+    dirtyBox.textContent = dirty ? '本地草稿未保存' : '已与服务器同步';
+    dirtyBox.className = dirty ? 'warn-text' : 'ok';
+  }
+  if (conflictBox) {
+    if (serverChangedWhileDirty) {
+      conflictBox.textContent = '检测到服务器配置已变化，本地草稿可能覆盖远端新改动';
+      conflictBox.className = 'bad';
+    } else {
+      conflictBox.textContent = '无';
+      conflictBox.className = '';
+    }
+  }
+  persistLocalDraft();
+}
+function buildDiffLines(a, b) {
+  const left = String(a || '').replace(/\r/g, '').split('\n');
+  const right = String(b || '').replace(/\r/g, '').split('\n');
+  const max = Math.max(left.length, right.length);
+  const lines = [];
+  let changed = 0;
+  for (let i = 0; i < max; i++) {
+    const l = left[i];
+    const r = right[i];
+    if (l === r) continue;
+    changed++;
+    if (typeof l !== 'undefined') lines.push('- ' + l);
+    if (typeof r !== 'undefined') lines.push('+ ' + r);
+    if (lines.length >= 160) break;
+  }
+  return { changed, text: lines.length ? lines.join('\n') : '暂无差异' };
+}
+function renderDraftDiff() {
+  const summary = document.getElementById('config-diff-summary');
+  const preview = document.getElementById('config-diff-preview');
+  const hint = document.getElementById('config-diff-hint');
+  if (!summary || !preview || !hint) return;
+  const diff = buildDiffLines(lastServerConfig, getCurrentDraft());
+  if (diff.changed === 0) {
+    summary.textContent = '无差异';
+    summary.className = 'muted';
+    hint.textContent = serverChangedWhileDirty ? '服务器配置已变化，但当前编辑器内容已经与服务器同步。' : '这里显示浏览器本地草稿与服务器当前配置的差异预览。';
+    preview.textContent = '暂无差异';
+    return;
+  }
+  summary.textContent = '共 ' + diff.changed + ' 处差异' + (diff.changed > 160 ? '（已截断）' : '');
+  summary.className = serverChangedWhileDirty ? 'bad' : 'warn-text';
+  hint.textContent = serverChangedWhileDirty ? '冲突提示：服务器配置在你编辑期间变了。保存前先确认右侧 diff。' : '仅本地草稿有改动，尚未保存到服务器。';
+  preview.textContent = diff.text;
 }
 
 function formatTemplateConfig() {
@@ -269,6 +426,20 @@ function formatTemplateConfig() {
     toast('模版 JSON 已格式化');
   } catch (_) {
     toast('模版 JSON 格式错误，无法格式化', false);
+  }
+}
+
+function formatConfig() {
+  const el = getConfigEl();
+  if (!el) return;
+  try {
+    const v = JSON.parse(el.value);
+    el.value = JSON.stringify(v, null, 2);
+    updateConfigDirtyState();
+    renderDraftDiff();
+    toast('JSON 已格式化');
+  } catch (_) {
+    toast('JSON 格式错误，无法格式化', false);
   }
 }
 
@@ -290,7 +461,10 @@ async function saveTemplateConfig() {
 }
 
 function syncConfigFromServer() {
-  refreshConfigTab(true);
+  const el = getConfigEl();
+  if (!el) return;
+  if (isDirtyDraft() && !confirm('本地草稿有未保存修改，确认用服务器版本覆盖？')) return;
+  refreshConfigTab(true, { preferServerConfig: true });
   toast('已刷新完整配置');
 }
 
@@ -346,7 +520,53 @@ async function importManualNodes() {
 async function validateConfig() {
   const el = getConfigEl();
   if (!el) return;
-  return await postJSON('/api/singbox/config/validate', {config: el.value});
+  const j = await postJSON('/api/singbox/config/validate', {config: el.value});
+  if (j && j.ok) {
+    renderConfigRisk(j.risk || null);
+  }
+  if (j && !j.ok && j.error) {
+    const lineMatch = String(j.error).match(/line\s*(\d+)/i) || String(j.error).match(/(\d+):(\d+)/);
+    if (lineMatch) {
+      const lineNo = Number(lineMatch[1]);
+      if (lineNo > 0) {
+        const lines = el.value.replace(/\r/g, '').split('\n');
+        let pos = 0;
+        for (let i = 0; i < lineNo - 1 && i < lines.length; i++) pos += lines[i].length + 1;
+        el.focus();
+        el.setSelectionRange(pos, Math.min(pos + (lines[lineNo - 1] || '').length, el.value.length));
+      }
+    }
+  }
+  return j;
+}
+
+function renderConfigRisk(risk) {
+  const levelEl = document.getElementById('config-risk-level');
+  const summaryEl = document.getElementById('config-risk-summary');
+  const itemsEl = document.getElementById('config-risk-items');
+  if (!levelEl || !summaryEl || !itemsEl) return;
+  const level = (risk && risk.level) || 'ok';
+  levelEl.textContent = level === 'bad' ? '高风险' : (level === 'warn' ? '需确认' : '低风险');
+  levelEl.className = 'badge badge-plain ' + (level === 'bad' ? 'badge-bad' : (level === 'warn' ? 'badge-warn' : 'badge-ok'));
+  summaryEl.textContent = (risk && risk.summary) || '未发现明显高风险变更';
+  const items = (risk && Array.isArray(risk.items)) ? risk.items : [];
+  if (!items.length) {
+    itemsEl.innerHTML = '<div class="muted">暂无风险项</div>';
+    return;
+  }
+  itemsEl.innerHTML = items.map(x => '<div>• ' + escapeHTML(String(x || '')) + '</div>').join('');
+}
+
+async function saveConfig(restart) {
+  const current = getCurrentDraft();
+  if (serverChangedWhileDirty && !confirm('检测到服务器配置已变化。继续保存会以当前草稿覆盖服务器版本。确认继续？')) return;
+  const j = await postJSON('/api/singbox/config/save', {config: current, restart});
+  if (j && j.ok) {
+    serverChangedWhileDirty = false;
+    try { localStorage.removeItem(draftKey); } catch (_) {}
+    await refreshConfigTab(true, { forceConfig: current });
+  }
+  return j;
 }
 
 async function createBackup() {
@@ -413,6 +633,185 @@ function applyUpgradeOverview(data) {
     setText('panel-upgrade-note', '将发布包解压到配置的 updates 目录后，可在此检测与执行升级。');
   }
   renderIPForwardStatus(data.ipForwardStatus || null, data.ipForwardError || data.ipForwardMessage || '检测失败');
+}
+
+let lastPanelVersionInfo = null;
+
+async function checkPanelRelease() {
+  const r = await fetch('/api/panel/version', {cache:'no-store'});
+  const j = await r.json();
+  lastPanelVersionInfo = j;
+  const currentVersionEl = document.getElementById('panel-current-version');
+  const releaseVersionEl = document.getElementById('panel-release-version');
+  const noteEl = document.getElementById('panel-upgrade-note');
+  if (currentVersionEl) currentVersionEl.textContent = j.currentVersion || '';
+  if (releaseVersionEl) releaseVersionEl.textContent = (j.remote && j.remote.version) || (j.release && j.release.version) || j.latestVersion || '未发现';
+
+  let note = j.message || '';
+  if (j.remote && j.remote.url) note += ` · 远程(${j.remote.channel || '-'}/${j.remote.arch || '-'})`;
+  if (j.remote_error) note += ` · 远程异常: ${j.remote_error}`;
+  if (j.checked_at) note += ` · 检查时间: ${j.checked_at}`;
+  if (j.release && j.release.path) note += ` · 本地包目录: ${j.release.path}`;
+  if (noteEl) noteEl.textContent = note;
+  toast(j.message || '已检查升级状态', true);
+  return j;
+}
+
+async function pollUpgradeTask(taskId) {
+  if (!taskId) return false;
+  for (let i = 0; i < 25; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const r = await fetch('/api/panel/upgrade/task?id=' + encodeURIComponent(taskId), {cache:'no-store'});
+      if (!r.ok) continue;
+      const j = await r.json();
+      const t = j.task || {};
+      if (t.status === 'running' && t.message) {
+        setBusy(true, t.message);
+        renderPanelTaskSteps(t);
+      }
+      if (t.status === 'success') {
+        renderPanelTaskSteps(t);
+        toast(t.message || '升级成功，页面即将刷新', true);
+        setBusy(false);
+        setTimeout(() => window.location.reload(), 1200);
+        return true;
+      }
+      if (t.status === 'failed') {
+        renderPanelTaskSteps(t);
+        toast('升级失败: ' + (t.error || t.message || 'unknown'), false);
+        showErrorDetail(panelTaskDetailText(t, taskId));
+        setBusy(false);
+        return true;
+      }
+    } catch (_) {
+      // 升级过程中页面可能短暂断开
+    }
+  }
+  return false;
+}
+
+function panelTaskDetailText(task, taskId) {
+  const lines = ['任务ID: ' + taskId, '状态: ' + (task.status || '-'), '消息: ' + (task.message || '-')];
+  const steps = Array.isArray(task.steps) ? task.steps : [];
+  if (steps.length) {
+    lines.push('', '阶段日志:');
+    steps.forEach(step => {
+      lines.push(`[${step.status || '-'}] ${step.time || '-'} · ${step.message || '-'}`);
+      if (step.detail) lines.push(String(step.detail));
+    });
+  }
+  if (task.error) lines.push('', '错误详情:', task.error);
+  return lines.join('\n');
+}
+
+function renderPanelTaskSteps(task) {
+  const note = document.getElementById('panel-upgrade-note');
+  if (!note || !task) return;
+  const steps = Array.isArray(task.steps) ? task.steps : [];
+  if (!steps.length) {
+    note.textContent = task.message || '升级任务运行中';
+    return;
+  }
+  const latest = steps.slice(-4).map(step => `${step.status || '-'} · ${step.message || '-'}`).join(' · ');
+  note.textContent = (task.message || '升级任务运行中') + ' · ' + latest;
+}
+
+function renderPanelPreflight(preflight) {
+  const note = document.getElementById('panel-upgrade-note');
+  if (!note || !preflight) return;
+  const checks = Array.isArray(preflight.checks) ? preflight.checks : [];
+  const detail = checks.map(c => {
+    const mark = c.ok ? 'OK' : (c.level === 'warn' ? 'WARN' : 'FAIL');
+    return `${mark} ${c.name}: ${c.message || '-'}`;
+  }).join(' · ');
+  note.textContent = (preflight.message || '升级前检查完成') + (detail ? ' · ' + detail : '');
+}
+
+async function panelUpgradePreflight(kind='local') {
+  const note = document.getElementById('panel-upgrade-note');
+  if (note) note.textContent = '正在执行升级前检查...';
+  try {
+    const r = await fetch('/api/panel/upgrade/preflight?kind=' + encodeURIComponent(kind), {cache:'no-store'});
+    const j = await r.json();
+    renderPanelPreflight(j.preflight);
+    toast(j.ok ? '升级前检查通过' : '升级前检查未通过', !!j.ok);
+    return j.preflight || null;
+  } catch (e) {
+    if (note) note.textContent = '升级前检查失败：' + e;
+    toast('升级前检查失败', false);
+    return null;
+  }
+}
+
+function getPanelRemoteUpgradeURLInput() {
+  return document.getElementById('singbox-remote-upgrade-url') || document.getElementById('remote-upgrade-url');
+}
+
+async function upgradePanel() {
+  if (!confirm('执行本地包面板升级后，当前页面可能会短暂断开。确认继续？')) return;
+  const preflight = await panelUpgradePreflight('local');
+  if (!preflight || !preflight.ok) return;
+  setBusy(true, '正在触发本地升级任务...');
+  const j = await request('/api/panel/upgrade', {
+    method:'POST',
+    body:JSON.stringify({}),
+    silent:true
+  });
+  if (!j || !j.ok) {
+    setBusy(false);
+    toast('触发升级失败', false);
+    return;
+  }
+  const taskId = j.task && j.task.id;
+  toast((j.message || '已触发升级任务') + (taskId ? (' · 任务ID: ' + taskId) : ''), true);
+  const done = await pollUpgradeTask(taskId);
+  if (!done) {
+    toast('升级任务仍在处理中，请稍后手动刷新页面', true);
+    setBusy(false);
+  }
+}
+
+async function upgradePanelRemote() {
+  const input = getPanelRemoteUpgradeURLInput();
+  const url = input ? input.value.trim() : '';
+  if (!url) {
+    const preflight = await panelUpgradePreflight('remote');
+    if (!preflight || !preflight.ok) {
+      toast('远程升级前检查未通过，请先修复配置再升级', false);
+      return;
+    }
+  }
+  const tip = url
+    ? '面板将从你填写的链接下载升级包并覆盖自身，升级期间页面将断开。确认继续？'
+    : '面板将自动从配置的更新源检查并下载最新包，升级期间页面将断开。确认继续？';
+  if (!confirm(tip)) return;
+
+  setBusy(true, '正在下载并升级，请耐心等待...');
+  let j = null;
+  try {
+    j = await request('/api/panel/upgrade/remote', {
+      method:'POST',
+      body:JSON.stringify(url ? {url} : {}),
+      silent:true
+    });
+  } catch (_) {
+    // 服务重启中可能暂时断开
+  }
+
+  if (!j || !j.ok) {
+    setBusy(false);
+    toast('触发远程升级失败', false);
+    return;
+  }
+
+  const taskId = j.task && j.task.id;
+  toast((j.message || '已触发升级任务') + (taskId ? (' · 任务ID: ' + taskId) : ''), true);
+  const done = await pollUpgradeTask(taskId);
+  if (!done) {
+    toast('升级任务仍在处理中，请稍后手动刷新页面', true);
+    setBusy(false);
+  }
 }
 
 async function refreshSingboxUpgradeOverview(force = false) {
@@ -489,8 +888,46 @@ async function uploadCoreFile(btn) {
 }
 async function saveCron() { const days = Number(document.getElementById('cron-days').value || 0); const hour = Number(document.getElementById('cron-hour').value || 0); const j = await postJSON('/api/singbox/cron', {days, hour}); if (j.ok) await refreshSingboxOverview(); }
 async function deleteCron() { if (!confirm('确认删除定时更新任务？')) return; const j = await fetchDelete('/api/singbox/cron'); if (j.ok) await refreshSingboxOverview(); }
-async function saveMonitorConfig() {
-  const payload = {
+const monitorSelectableTypes = new Set(['Selector', 'URLTest', 'Fallback', 'LoadBalance']);
+let monitorGroupCatalog = [];
+let monitorGroupFetchBusy = false;
+
+function normalizeMonitorGroupKey(v) {
+  return String(v || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function resolveMonitorGroupValue(value, items) {
+  value = String(value || '').trim();
+  if (!value) return '';
+  if ((items || []).some(item => item.tag === value)) return value;
+  const want = normalizeMonitorGroupKey(value);
+  if (!want) return '';
+  const matches = (items || []).filter(item => normalizeMonitorGroupKey(item.tag) === want);
+  return matches.length === 1 ? matches[0].tag : '';
+}
+
+function monitorModeText(mode) {
+  switch (String(mode || '')) {
+    case 'primary_active': return '当前使用主组';
+    case 'fallback_active': return '当前使用备组';
+    case 'auto_switch': return '自动判断中';
+    case 'disabled': return '自动监控关闭';
+    default: return mode || '-';
+  }
+}
+
+function monitorTypeText(type) {
+  switch (String(type || '')) {
+    case 'Selector': return '手动选择组';
+    case 'URLTest': return '自动测速组';
+    case 'Fallback': return '故障转移组';
+    case 'LoadBalance': return '负载均衡组';
+    default: return type || '-';
+  }
+}
+
+function readMonitorForm() {
+  return {
     enabled: !!document.getElementById('monitor-enabled').checked,
     disable_primary_group_optimization: !!document.getElementById('monitor-disable-primary-optimization').checked,
     default_proxy_group: document.getElementById('monitor-default-proxy-group').value || '',
@@ -507,6 +944,122 @@ async function saveMonitorConfig() {
     timeout_ms: Number(document.getElementById('monitor-timeout-ms').value || 5000),
     state_file: document.getElementById('monitor-state-file').value || ''
   };
+}
+
+function renderMonitorGroupCatalog(items) {
+  const el = document.getElementById('monitor-group-list');
+  if (!el) return;
+  if (!items || !items.length) {
+    el.innerHTML = '<div class="muted empty-text">未读取到可用分组。请确认 sing-box 已运行且 clash_api 可访问。</div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const current = item.now ? (' · 当前 ' + escapeHTML(item.now)) : '';
+    const members = item.members > 0 ? (' · 成员 ' + escapeHTML(String(item.members))) : '';
+    return `<div class="backup-item backup-item-compact monitor-group-item"><div><div class="backup-name">${escapeHTML(item.tag)}</div><div class="muted">${escapeHTML(monitorTypeText(item.type))}${current}${members}</div></div><span class="badge badge-plain">${escapeHTML(item.type)}</span></div>`;
+  }).join('');
+}
+
+function renderMonitorGroupSelect(id, currentValue, items, placeholder) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const resolvedValue = resolveMonitorGroupValue(currentValue, items);
+  const selectedValue = resolvedValue || String(currentValue || '').trim();
+  const options = [`<option value="">${escapeHTML(placeholder)}</option>`];
+  (items || []).forEach(item => {
+    const selected = item.tag === selectedValue ? ' selected' : '';
+    const meta = [monitorTypeText(item.type)];
+    if (item.now) meta.push('当前 ' + item.now);
+    options.push(`<option value="${escapeHTML(item.tag)}"${selected}>${escapeHTML(item.tag)} · ${escapeHTML(meta.join(' / '))}</option>`);
+  });
+  if (selectedValue && !(items || []).some(item => item.tag === selectedValue)) {
+    options.push(`<option value="${escapeHTML(selectedValue)}" selected>${escapeHTML(selectedValue)} · 当前配置</option>`);
+  }
+  el.innerHTML = options.join('');
+  el.value = selectedValue;
+}
+
+function updateMonitorResolvedHint(id, currentValue, items) {
+  const el = document.getElementById(id + '-resolved');
+  if (!el) return;
+  const raw = String(currentValue || '').trim();
+  if (!raw) {
+    el.textContent = '未设置';
+    return;
+  }
+  const resolved = resolveMonitorGroupValue(raw, items);
+  if (resolved && resolved !== raw) {
+    el.textContent = '当前会自动解析为：' + resolved;
+    return;
+  }
+  if (resolved) {
+    el.textContent = '当前将直接使用：' + resolved;
+    return;
+  }
+  el.textContent = '当前配置名未在实时分组里找到；如果刚改过模板或内核，请先重新读取分组。';
+}
+
+function refreshMonitorConfigPreview() {
+  const mc = readMonitorForm();
+  const preview = document.getElementById('monitor-config-preview');
+  const enabledInline = document.getElementById('monitor-enabled-inline');
+  if (preview) preview.textContent = buildMonitorStrategySummary(mc);
+  if (enabledInline) enabledInline.innerHTML = mc.enabled ? '<span class="ok">已启用</span>' : '<span class="bad">已关闭</span>';
+  updateMonitorResolvedHint('monitor-default-proxy-group', mc.default_proxy_group, monitorGroupCatalog);
+  updateMonitorResolvedHint('monitor-primary-group', mc.primary_group, monitorGroupCatalog);
+  updateMonitorResolvedHint('monitor-fallback-group', mc.fallback_group, monitorGroupCatalog);
+}
+
+async function refreshMonitorGroupOptions(showToast = false) {
+  if (monitorGroupFetchBusy) return monitorGroupCatalog;
+  monitorGroupFetchBusy = true;
+  const sourceEl = document.getElementById('monitor-group-source');
+  try {
+    if (sourceEl) sourceEl.textContent = '正在读取当前 Clash 分组...';
+    const r = await fetch('/api/clash/proxies?_=' + Date.now(), { cache: 'no-store' });
+    const j = await r.json();
+    const proxies = (j && j.proxies) || {};
+    monitorGroupCatalog = Object.entries(proxies).reduce((list, [tag, info]) => {
+      const type = String((info && info.type) || '');
+      if (!monitorSelectableTypes.has(type)) return list;
+      list.push({
+        tag,
+        type,
+        now: (info && info.now) || '',
+        members: Array.isArray(info && info.all) ? info.all.length : 0,
+      });
+      return list;
+    }, []);
+    const form = readMonitorForm();
+    renderMonitorGroupSelect('monitor-default-proxy-group', form.default_proxy_group, monitorGroupCatalog, '请选择默认代理组');
+    renderMonitorGroupSelect('monitor-primary-group', form.primary_group, monitorGroupCatalog, '请选择主组');
+    renderMonitorGroupSelect('monitor-fallback-group', form.fallback_group, monitorGroupCatalog, '请选择备组');
+    renderMonitorGroupCatalog(monitorGroupCatalog);
+    refreshMonitorConfigPreview();
+    if (sourceEl) {
+      sourceEl.textContent = monitorGroupCatalog.length
+        ? `已读取 ${monitorGroupCatalog.length} 个可用分组，选择时会自动兼容 emoji 前缀与旧命名。`
+        : '未读取到可用分组，请确认 clash_api 已开启。';
+    }
+    if (showToast) toast(monitorGroupCatalog.length ? '已刷新监控分组列表' : '未读取到可用分组', monitorGroupCatalog.length > 0);
+    return monitorGroupCatalog;
+  } catch (e) {
+    if (sourceEl) sourceEl.textContent = '读取分组失败：' + e.message;
+    renderMonitorGroupCatalog([]);
+    refreshMonitorConfigPreview();
+    if (showToast) toast('读取监控分组失败: ' + e.message, false);
+    return [];
+  } finally {
+    monitorGroupFetchBusy = false;
+  }
+}
+
+async function refreshMonitorGroups(showToast = true) {
+  return await refreshMonitorGroupOptions(showToast);
+}
+
+async function saveMonitorConfig() {
+  const payload = readMonitorForm();
   const j = await postJSON('/api/monitor/config', payload);
   if (j.ok) await refreshSingboxOverview();
 }
@@ -566,15 +1119,18 @@ function renderBackups(list, status) {
 
 function buildMonitorStrategySummary(mc) {
   if (!mc) return '-';
-  if (!mc.enabled) return '自动检测切换已关闭';
+  if (!mc.enabled) return '自动监控已关闭，只会保留手动执行，不会自动测速或切换。';
+  const defaultGroup = mc.default_proxy_group || '默认代理组';
   const primary = (mc.primary_group || '主组') + ' <= ' + String(mc.primary_max_stable_delay_ms || 0) + 'ms';
   const fallback = (mc.fallback_group || '备组') + ' <= ' + String(mc.fallback_max_stable_delay_ms || 0) + 'ms';
   const optimization = mc.disable_primary_group_optimization ? '组内优选：关闭' : '组内优选：开启';
   const failback = mc.auto_failback ? '自动回切：开启' : '自动回切：关闭';
-  return '主组 ' + primary + '，异常时切到 ' + fallback + '，' + optimization + '，' + failback;
+  const thresholds = '失败阈值：' + String(mc.fail_threshold || 1) + '，恢复阈值：' + String(mc.success_threshold || 1) + '，复检间隔：' + String(mc.recheck_interval_sec || 1) + '秒';
+  return '默认代理组 ' + defaultGroup + ' 优先走 ' + primary + '，异常时切到 ' + fallback + '，' + optimization + '，' + failback + '，' + thresholds;
 }
 
-function applyOverview(data) {
+function applyOverview(data, opts) {
+  opts = opts || {};
   const $ = (id) => document.getElementById(id);
   const setText = (id, v) => { const el = $(id); if (el) el.textContent = (v ?? ''); };
   const setHTML = (id, v) => { const el = $(id); if (el) el.innerHTML = (v ?? ''); };
@@ -595,8 +1151,10 @@ function applyOverview(data) {
     }
   }
 
-  setText('sb-updated-at', data.updatedAt || '');
-  setText('config-updated-at', data.updatedAt || '');
+  if (Object.prototype.hasOwnProperty.call(data, 'updatedAt')) {
+    setText('sb-updated-at', data.updatedAt || '');
+    setText('config-updated-at', data.updatedAt || '');
+  }
   if (!fullSubDirty) {
     setVal('suburl-full', (data.subscription && data.subscription.full_config_url) || data.url || '');
   }
@@ -646,11 +1204,21 @@ function applyOverview(data) {
   }
   if (data.monitorCron) {
     setHTML('monitor-cron-enabled', data.monitorCron.enabled ? '<span class="ok">已开启</span>' : '<span class="bad">未开启</span>');
-    setText('monitor-cron-summary', data.monitorCron.enabled ? ((data.monitorCron.summary || '已开启') + '（每轮含 30 秒补跑）') : '未开启');
+    setText('monitor-cron-summary', data.monitorCron.enabled ? (data.monitorCron.summary || '已开启') : '未开启');
+    setText('monitor-cron-summary-inline', data.monitorCron.enabled ? (data.monitorCron.summary || '已开启') : '未开启');
   }
   if (data.monitorStatus) {
-    setText('monitor-mode-inline', data.monitorStatus.mode || '-');
+    setText('monitor-mode-inline', monitorModeText(data.monitorStatus.mode || '-'));
     setText('monitor-target-inline', data.monitorStatus.actualDefaultTarget || data.monitorStatus.actual_default_target || '-');
+    setHTML('monitor-enabled-inline', data.monitorStatus.enabled ? '<span class="ok">已启用</span>' : '<span class="bad">已关闭</span>');
+    setText('monitor-primary-inline', data.monitorStatus.primaryGroup || data.monitorStatus.primary_group || '-');
+    setText('monitor-primary-actual-inline', data.monitorStatus.primaryActual || data.monitorStatus.primary_actual || '-');
+    setText('monitor-fallback-inline', data.monitorStatus.fallbackGroup || data.monitorStatus.fallback_group || '-');
+    setText('monitor-primary-latency-inline', data.monitorStatus.last_primary_latency_ms ? (String(data.monitorStatus.last_primary_latency_ms) + 'ms') : '-');
+    setText('monitor-fallback-latency-inline', data.monitorStatus.last_fallback_latency_ms ? (String(data.monitorStatus.last_fallback_latency_ms) + 'ms') : '-');
+    setText('monitor-last-run-inline', data.monitorStatus.last_run_at || '-');
+    setText('monitor-last-switch-inline', data.monitorStatus.last_switch_at || '-');
+    setText('monitor-strategy-summary', data.monitorStatus.message || '监控状态加载中...');
   }
   if (data.monitorConfig) {
     const mc = data.monitorConfig;
@@ -658,10 +1226,7 @@ function applyOverview(data) {
     setChecked('monitor-enabled', mc.enabled);
     setChecked('monitor-disable-primary-optimization', mc.disable_primary_group_optimization);
     setChecked('monitor-auto-failback', mc.auto_failback);
-    setVal('monitor-default-proxy-group', mc.default_proxy_group || '');
-    setVal('monitor-primary-group', mc.primary_group || '');
     setVal('monitor-primary-delay', mc.primary_max_stable_delay_ms || 150);
-    setVal('monitor-fallback-group', mc.fallback_group || '');
     setVal('monitor-fallback-delay', mc.fallback_max_stable_delay_ms || 500);
     setVal('monitor-fail-threshold', mc.fail_threshold || 2);
     setVal('monitor-success-threshold', mc.success_threshold || 2);
@@ -670,23 +1235,46 @@ function applyOverview(data) {
     setVal('monitor-test-url', mc.test_url || '');
     setVal('monitor-timeout-ms', mc.timeout_ms || 5000);
     setVal('monitor-state-file', mc.state_file || '');
-    setText('monitor-strategy-summary', buildMonitorStrategySummary(mc));
+    if (!(data.monitorStatus && data.monitorStatus.message)) {
+      setText('monitor-strategy-summary', buildMonitorStrategySummary(mc));
+    }
+    renderMonitorGroupSelect('monitor-default-proxy-group', mc.default_proxy_group || '', monitorGroupCatalog, '请选择默认代理组');
+    renderMonitorGroupSelect('monitor-primary-group', mc.primary_group || '', monitorGroupCatalog, '请选择主组');
+    renderMonitorGroupSelect('monitor-fallback-group', mc.fallback_group || '', monitorGroupCatalog, '请选择备组');
+    refreshMonitorConfigPreview();
   }
 
-  if (data.configStatus) {
+  if (Object.prototype.hasOwnProperty.call(data, 'configStatus') && data.configStatus) {
     setHTML('config-json-valid', data.configStatus.server_json_valid ? '<span class="ok">有效</span>' : '<span class="bad">无效</span>');
     setText('config-server-size', `${data.configStatus.server_bytes || 0} bytes / ${data.configStatus.server_lines || 0} lines`);
   }
 
   renderNodeSummary((data.subscription && data.subscription.node_summary) || null);
   renderNodeSubscriptionResults((data.subscription && data.subscription.node_results) || []);
+  renderSubscriptionSources((data.subscription && data.subscription.sources) || null);
   renderHistory(data.history || []);
   renderUpdateEvents(data.updateEvents || []);
   renderBackups(data.backups || [], data.backupStatus || null);
 
-  // 完整配置只读展示
-  setVal('config', data.config || '');
-  if (!isTemplateConfigProtected()) {
+  if (Object.prototype.hasOwnProperty.call(data, 'config')) {
+    const incomingServerConfig = data.config || '';
+    if (!opts.keepConfigEditor || opts.preferServerConfig || !isDirtyDraft()) {
+      setVal('config', (typeof opts.forceConfig === 'string') ? opts.forceConfig : incomingServerConfig);
+    }
+    if (incomingServerConfig !== lastServerConfig && isDirtyDraft()) {
+      serverChangedWhileDirty = true;
+    }
+    if (typeof opts.forceConfig === 'string') {
+      lastServerConfig = opts.forceConfig;
+    } else if (!opts.keepConfigEditor || opts.preferServerConfig || !isDirtyDraft()) {
+      lastServerConfig = incomingServerConfig;
+      if (!isDirtyDraft()) serverChangedWhileDirty = false;
+    }
+    updateConfigDirtyState();
+    renderDraftDiff();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'templateConfig') && !isTemplateConfigProtected()) {
     setVal('template-config', data.templateConfig || '');
   }
 }
@@ -702,19 +1290,19 @@ const sbTabLoaded = {
 let singboxOverviewBusy = false;
 let singboxTabBusy = false;
 
-async function refreshCurrentSingboxTab(force = false) {
+async function refreshCurrentSingboxTab(force = false, applyOpts) {
   if (currentSbTab === 'upgrade') return await refreshSingboxUpgradeOverview(force);
-  if (currentSbTab === 'subscription') return await refreshSubscriptionTab(force);
-  if (currentSbTab === 'backup') return await refreshBackupTab(force);
-  if (currentSbTab === 'config') return await refreshConfigTab(force);
+  if (currentSbTab === 'subscription') return await refreshSubscriptionTab(force, applyOpts);
+  if (currentSbTab === 'backup') return await refreshBackupTab(force, applyOpts);
+  if (currentSbTab === 'config') return await refreshConfigTab(force, applyOpts);
   if (currentSbTab === 'nodes') {
     loadClashFrame();
     return null;
   }
-  return await refreshSingboxOverview(force);
+  return await refreshSingboxOverview(force, applyOpts);
 }
 
-async function refreshSubscriptionTab(force = false) {
+async function refreshSubscriptionTab(force = false, applyOpts) {
   if (singboxTabBusy || document.hidden) return;
   if (!force && sbTabLoaded.subscription) return;
   singboxTabBusy = true;
@@ -736,7 +1324,7 @@ async function refreshSubscriptionTab(force = false) {
       manualNodesLastResult: (manual && (manual.last_result || manual.lastResult || manual.manual_nodes_last_result)) || null,
       history: (history && history.history) || [],
       updateEvents: (updates && updates.events) || [],
-    });
+    }, applyOpts);
     sbTabLoaded.subscription = true;
     return sub;
   } finally {
@@ -744,7 +1332,7 @@ async function refreshSubscriptionTab(force = false) {
   }
 }
 
-async function refreshBackupTab(force = false) {
+async function refreshBackupTab(force = false, applyOpts) {
   if (singboxTabBusy || document.hidden) return;
   if (!force && sbTabLoaded.backup) return;
   singboxTabBusy = true;
@@ -759,7 +1347,7 @@ async function refreshBackupTab(force = false) {
     applyOverview({
       backups: Array.isArray(backups) ? backups : [],
       backupStatus: (statusPayload && statusPayload.status) || null,
-    });
+    }, applyOpts);
     sbTabLoaded.backup = true;
     return backups;
   } finally {
@@ -767,11 +1355,12 @@ async function refreshBackupTab(force = false) {
   }
 }
 
-async function refreshConfigTab(force = false) {
+async function refreshConfigTab(force = false, applyOpts) {
   if (singboxTabBusy || document.hidden) return;
   if (!force && sbTabLoaded.config) return;
   singboxTabBusy = true;
   try {
+    applyOpts = Object.assign({ keepConfigEditor: true }, applyOpts || {});
     const ts = Date.now();
     const [configRes, templateRes, metaRes] = await Promise.all([
       fetch('/api/singbox/config?_=' + ts, { cache: 'no-store' }),
@@ -786,7 +1375,7 @@ async function refreshConfigTab(force = false) {
       configStatus: (meta && meta.configStatus) || null,
       config: (config && config.config) || '',
       templateConfig: (template && template.config) || '',
-    });
+    }, applyOpts);
     sbTabLoaded.config = true;
     return config;
   } finally {
@@ -800,14 +1389,15 @@ function activeSingboxPollingMs() {
   return 0;
 }
 
-async function refreshSingboxOverview(force = false) {
+async function refreshSingboxOverview(force = false, applyOpts) {
   if (singboxOverviewBusy || document.hidden) return;
   if (!force && currentSbTab !== 'overview') return;
   singboxOverviewBusy = true;
   try {
     const r = await fetch('/api/singbox/overview?_=' + Date.now(), { cache: 'no-store' });
     const j = await r.json();
-    applyOverview(j);
+    applyOverview(j, applyOpts);
+    await refreshMonitorGroupOptions(false);
     sbTabLoaded.overview = true;
     return j;
   } finally {
@@ -833,12 +1423,45 @@ document.addEventListener('DOMContentLoaded', () => {
   if (fullInput) fullInput.addEventListener('input', markFullSubDirty);
   const manualInput = document.getElementById('manual-nodes-input');
   if (manualInput) manualInput.addEventListener('input', markManualNodesDirty);
+  [
+    'monitor-enabled',
+    'monitor-disable-primary-optimization',
+    'monitor-auto-failback',
+    'monitor-default-proxy-group',
+    'monitor-primary-group',
+    'monitor-primary-delay',
+    'monitor-fallback-group',
+    'monitor-fallback-delay',
+    'monitor-fail-threshold',
+    'monitor-success-threshold',
+    'monitor-recheck-interval',
+    'monitor-api-base',
+    'monitor-test-url',
+    'monitor-timeout-ms',
+    'monitor-state-file'
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', refreshMonitorConfigPreview);
+    el.addEventListener('change', refreshMonitorConfigPreview);
+  });
+  const configInput = getConfigEl();
+  if (configInput) {
+    configInput.addEventListener('input', function() {
+      updateConfigDirtyState();
+      renderDraftDiff();
+    });
+    restoreLocalDraft();
+    updateConfigDirtyState();
+    renderDraftDiff();
+  }
   const templateInput = getTemplateEl();
   if (templateInput) {
     templateInput.addEventListener('input', markTemplateConfigDirty);
     templateInput.addEventListener('focus', () => { templateConfigEditing = true; });
     templateInput.addEventListener('blur', () => { templateConfigEditing = false; });
   }
+  refreshMonitorConfigPreview();
 });
 
 const singboxPolling = startManagedPolling(function(){

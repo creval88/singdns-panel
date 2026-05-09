@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type ImportSummary struct {
@@ -106,23 +107,40 @@ func (s *SingBoxService) prepareFullConfigSubscription(content string) (string, 
 		return "", nil, fmt.Errorf("parse full config json: %w", err)
 	}
 
+	notes := make([]string, 0, 4)
+	repairNotes, err := repairFullConfigOutboundReferences(raw)
+	if err != nil {
+		return "", nil, err
+	}
+	notes = append(notes, repairNotes...)
+	content, err = marshalFullConfig(raw)
+	if err != nil {
+		return "", nil, err
+	}
+
 	if fullConfigUsesProviderExtensions(raw) {
 		keepRaw, err := s.shouldKeepNativeProviderConfig(content)
 		if err != nil {
 			return "", nil, err
 		}
 		if keepRaw {
-			return content, []string{
+			notes = append(notes,
 				"检测到当前内核原生支持 provider 扩展字段，完整配置按订阅原样导入",
 				"完整配置模式会直接覆盖当前配置，不会自动合并模板订阅节点、手动节点草稿或配置中心未保存草稿",
-			}, nil
+			)
+			return content, notes, nil
 		}
-		return s.sanitizeFullConfigSubscription(content)
+		cleaned, compatNotes, err := s.sanitizeFullConfigSubscription(content)
+		if err != nil {
+			return "", nil, err
+		}
+		return cleaned, append(notes, compatNotes...), nil
 	}
 
-	return content, []string{
+	notes = append(notes,
 		"完整配置模式会直接覆盖当前配置，不会自动合并模板订阅节点、手动节点草稿或配置中心未保存草稿",
-	}, nil
+	)
+	return content, notes, nil
 }
 
 func (s *SingBoxService) sanitizeFullConfigSubscription(content string) (string, []string, error) {
@@ -175,6 +193,14 @@ func (s *SingBoxService) sanitizeFullConfigSubscription(content string) (string,
 		return "", nil, fmt.Errorf("marshal sanitized full config: %w", err)
 	}
 	return string(b), compatNotes, nil
+}
+
+func marshalFullConfig(raw map[string]any) (string, error) {
+	b, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal full config: %w", err)
+	}
+	return string(b), nil
 }
 
 func (s *SingBoxService) shouldKeepNativeProviderConfig(content string) (bool, error) {
@@ -333,6 +359,188 @@ func isUnsupportedProviderFieldError(message string) bool {
 		}
 	}
 	return false
+}
+
+func repairFullConfigOutboundReferences(raw map[string]any) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	outbounds, _ := raw["outbounds"].([]any)
+	if len(outbounds) == 0 {
+		return nil, nil
+	}
+
+	known := collectOutboundTags(outbounds)
+	notes := make([]string, 0, 4)
+	for _, item := range outbounds {
+		m, ok := item.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		parentTag := strings.TrimSpace(stringValue(m["tag"]))
+		rawRefs, _ := m["outbounds"].([]any)
+		if len(rawRefs) == 0 {
+			continue
+		}
+		updated := false
+		for idx, ref := range rawRefs {
+			tag, ok := ref.(string)
+			if !ok {
+				continue
+			}
+			tag = strings.TrimSpace(tag)
+			if tag == "" || isSpecialOutboundReference(tag) {
+				continue
+			}
+			if _, exists := known[tag]; exists {
+				continue
+			}
+			candidate, repaired := closestOutboundTag(tag, known)
+			if !repaired {
+				return nil, fmt.Errorf("完整配置存在未定义 outbound 引用：%s -> %s", parentTag, tag)
+			}
+			rawRefs[idx] = candidate
+			updated = true
+			notes = append(notes, fmt.Sprintf("已修正 outbound 引用：%s 中的 %s -> %s", parentTag, tag, candidate))
+		}
+		if updated {
+			m["outbounds"] = rawRefs
+		}
+	}
+	return dedupeSubscriptionImportStrings(notes), nil
+}
+
+func collectOutboundTags(outbounds []any) map[string]struct{} {
+	known := make(map[string]struct{}, len(outbounds))
+	for _, item := range outbounds {
+		m, ok := item.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		tag := strings.TrimSpace(stringValue(m["tag"]))
+		if tag == "" {
+			continue
+		}
+		known[tag] = struct{}{}
+	}
+	return known
+}
+
+func isSpecialOutboundReference(tag string) bool {
+	switch strings.TrimSpace(tag) {
+	case "direct", "block", "dns-out":
+		return true
+	default:
+		return false
+	}
+}
+
+func closestOutboundTag(target string, known map[string]struct{}) (string, bool) {
+	targetNorm := normalizeOutboundTag(target)
+	if targetNorm == "" {
+		return "", false
+	}
+	bestTag := ""
+	bestDist := 1 << 30
+	secondBest := 1 << 30
+	for candidate := range known {
+		candidateNorm := normalizeOutboundTag(candidate)
+		if candidateNorm == "" {
+			continue
+		}
+		dist := levenshteinDistance(targetNorm, candidateNorm)
+		if dist < bestDist {
+			secondBest = bestDist
+			bestDist = dist
+			bestTag = candidate
+			continue
+		}
+		if dist < secondBest {
+			secondBest = dist
+		}
+	}
+	if bestTag == "" {
+		return "", false
+	}
+	if bestDist > 1 {
+		return "", false
+	}
+	if secondBest == bestDist {
+		return "", false
+	}
+	return bestTag, true
+}
+
+func normalizeOutboundTag(tag string) string {
+	tag = strings.TrimSpace(strings.ToLower(tag))
+	if tag == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range tag {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func levenshteinDistance(a, b string) int {
+	ar := []rune(a)
+	br := []rune(b)
+	if len(ar) == 0 {
+		return len(br)
+	}
+	if len(br) == 0 {
+		return len(ar)
+	}
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := 0; j <= len(br); j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 0
+			if ar[i-1] != br[j-1] {
+				cost = 1
+			}
+			insertCost := cur[j-1] + 1
+			deleteCost := prev[j] + 1
+			replaceCost := prev[j-1] + cost
+			cur[j] = minSubscriptionImportInt(insertCost, deleteCost, replaceCost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
+}
+
+func minSubscriptionImportInt(values ...int) int {
+	best := values[0]
+	for _, value := range values[1:] {
+		if value < best {
+			best = value
+		}
+	}
+	return best
+}
+
+func dedupeSubscriptionImportStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func wholeStringSlice(v any) []string {

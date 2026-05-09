@@ -15,60 +15,197 @@
 {{define "singbox_subscription_card"}}
 <section class="grid two singbox-work-grid">
   <section class="card">
-    <div class="card-title-row"><h3>订阅源与执行状态</h3><span class="badge">配置源</span></div>
+    <div class="card-title-row"><h3>完整配置订阅入口</h3><span class="badge">Full Config</span></div>
     <div class="info-strip-grid">
-      <div class="info-pill"><span class="muted">订阅状态</span><b id="sub-configured">{{if .Subscription.Configured}}已配置{{else}}未配置{{end}}</b></div>
-      <div class="info-pill"><span class="muted">来源主机</span><b id="sub-host">{{or .Subscription.Host "-"}}</b></div>
+      <div class="info-pill"><span class="muted">状态</span><b id="sub-full-configured">{{if .Subscription.FullConfigured}}已配置{{else}}未配置{{end}}</b></div>
+      <div class="info-pill"><span class="muted">当前配置更新时间</span><b id="sb-updated-at">{{.UpdatedAt}}</b></div>
       <div class="info-pill"><span class="muted">最近更新</span><b id="sub-last-update-time">{{or .Subscription.LastUpdateTime "尚无记录"}}</b></div>
       <div class="info-pill"><span class="muted">最近结果</span><b id="sub-last-update-status" class="{{if eq .Subscription.LastUpdateStatus "ok"}}ok{{else if .Subscription.LastUpdateStatus}}bad{{end}}">{{if eq .Subscription.LastUpdateStatus "ok"}}成功{{else if .Subscription.LastUpdateStatus}}{{.Subscription.LastUpdateStatus}}{{else}}未执行{{end}}</b></div>
     </div>
-    <label class="field-label" for="suburl">订阅链接</label>
-    <input id="suburl" value="{{.URL}}" placeholder="https://...">
-    <div class="status-list kv-list compact-kv">
-      <div><b>当前配置更新时间</b><span id="sb-updated-at">{{.UpdatedAt}}</span></div>
-      <div><b>最近动作</b><span id="sub-last-update-action">{{or .Subscription.LastUpdateAction "-"}}</span></div>
-      <div><b>结果说明</b><span id="sub-last-update-message">{{or .Subscription.LastUpdateMessage "保存订阅不会改配置，只有“立即更新订阅”才会下载并应用。"}}</span></div>
-    </div>
-    <div class="section-note">执行“立即更新订阅”时：下载 → 校验 → 自动备份当前配置 → 写入 → 重启。失败不会静默吞掉，会写入下方历史。</div>
+    <label class="field-label" for="suburl-full">完整配置订阅链接</label>
+    <input id="suburl-full" value="{{.Subscription.FullConfigURL}}" placeholder="https://.../config.json">
+    <div class="section-note">这里保留原来的完整配置订阅入口：如果远端返回的是完整 sing-box 配置，会直接校验、备份、覆盖并重启。</div>
     <div class="actions">
-      <button onclick="saveSub()">保存订阅</button>
-      <button onclick="confirmUpdateSub()">立即更新订阅</button>
+      <button onclick="saveFullSub()">保存完整配置订阅</button>
+      <button onclick="confirmUpdateFullSub()">立即更新完整配置订阅</button>
     </div>
   </section>
   <section class="card">
-    <div class="card-title-row"><h3>订阅历史与反馈</h3><span class="badge">History</span></div>
-    <div class="mini-split-head">
-      <div>
-        <div class="section-title tight">保存过的订阅 URL</div>
-        <div class="section-note">记录来源变更，方便核对"是不是换过订阅"。</div>
-      </div>
-      <div class="history-meta"><span class="muted">共</span> <b id="sub-history-count">{{.Subscription.HistoryCount}}</b></div>
+    <div class="card-title-row"><h3>多订阅节点模板入口</h3><span class="badge">Nodes + Template</span></div>
+    <div class="info-strip-grid">
+      <div class="info-pill"><span class="muted">状态</span><b id="sub-node-configured">{{if .Subscription.NodeConfigured}}已配置{{else}}未配置{{end}}</b></div>
+      <div class="info-pill"><span class="muted">来源主机</span><b id="sub-host">{{or .Subscription.Host "-"}}</b></div>
+      <div class="info-pill"><span class="muted">最近动作</span><b id="sub-last-update-action">{{or .Subscription.LastUpdateAction "-"}}</b></div>
+      <div class="info-pill"><span class="muted">结果说明</span><b id="sub-last-update-message">{{or .Subscription.LastUpdateMessage "保存订阅不会改配置，只有执行更新才会下载并应用。"}}</b></div>
     </div>
-    <div class="backup-list" id="subscription-history-list">
-      {{range .History}}
-      <div class="backup-item backup-item-compact"><div><div class="backup-name">{{.URL}}</div><div class="muted">{{.Time}}</div></div></div>
-      {{else}}<div class="muted empty-text">暂无订阅历史</div>{{end}}
+    <label class="field-label" for="suburl-new">节点订阅列表（可视化管理）</label>
+    <div class="actions toolbar-slim" style="margin-bottom:8px">
+      <input id="suburl-new" placeholder="https://a.example/sub" style="flex:1; min-width:0;">
+      <button type="button" onclick="addNodeSubscriptionURL()">添加</button>
     </div>
+    <div class="section-note">支持 add / delete / reorder。保存与更新会按当前列表顺序提交。</div>
+    <div class="backup-list" id="subscription-node-editor-list">
+      <div class="muted empty-text">暂无节点订阅，请先添加。</div>
+    </div>
+    <textarea id="suburls" rows="6" style="display:none" aria-hidden="true" placeholder="https://a.example/sub&#10;https://b.example/sub">{{if .Subscription.NodeURLs}}{{range $i, $u := .Subscription.NodeURLs}}{{if $i}}
+{{end}}{{$u}}{{end}}{{end}}</textarea>
+    <div class="section-note">这里专门处理“只有节点订阅，后续按模板写入配置”的流程。多条订阅里若部分失败，只要不是全部失败，就忽略失败项并继续写入；详细失败原因会记录在右侧执行记录。</div>
+
     <div class="divider"></div>
     <div class="mini-split-head">
       <div>
-        <div class="section-title tight">更新执行记录</div>
-        <div class="section-note">这里看"刚才为什么成功/失败"，不用猜。</div>
+        <div class="section-title tight">节点订阅执行摘要</div>
+        <div class="section-note">每次更新后可快速看到成功 / 忽略 / 失败与解析节点数。</div>
       </div>
-      <div class="history-meta"><span class="muted">共</span> <b id="sub-update-count">{{.Subscription.UpdateCount}}</b></div>
+      <div class="history-meta"><span class="muted">更新时间</span> <b id="node-summary-updated-at">{{if .Subscription.NodeSummary}}{{or .Subscription.NodeSummary.UpdatedAt "-"}}{{else}}-{{end}}</b></div>
     </div>
-    <div class="backup-list" id="subscription-update-list">
-      {{range .UpdateEvents}}
-      <div class="backup-item backup-item-compact event-item event-{{.Status}}">
-        <div>
-          <div class="backup-name">{{.Action}} · {{or .Message "-"}}</div>
-          <div class="muted">{{.Time}}{{if .URL}} · {{.URL}}{{end}}</div>
-        </div>
-        <span class="badge badge-plain {{if eq .Status "ok"}}badge-ok{{else}}badge-bad{{end}}">{{.Status}}</span>
+    <div class="status-list kv-list compact-kv" id="node-summary-box">
+      <div><b>总订阅</b><span id="node-summary-total">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Total}}{{else}}0{{end}}</span></div>
+      <div><b>成功</b><span id="node-summary-success">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Success}}{{else}}0{{end}}</span></div>
+      <div><b>忽略</b><span id="node-summary-ignored">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Ignored}}{{else}}0{{end}}</span></div>
+      <div><b>失败</b><span id="node-summary-failed">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.Failed}}{{else}}0{{end}}</span></div>
+      <div><b>解析节点</b><span id="node-summary-parsed">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.ParsedNodes}}{{else}}0{{end}}</span></div>
+      <div><b>命中模板组</b><span id="node-summary-groups">{{if .Subscription.NodeSummary}}{{.Subscription.NodeSummary.MatchedGroups}}{{else}}0{{end}}</span></div>
+    </div>
+
+    <div class="mini-split-head" style="margin-top:10px">
+      <div>
+        <div class="section-title tight">每条节点订阅状态</div>
+        <div class="section-note">最小交付：展示最近一次更新对每条 URL 的结果。</div>
       </div>
-      {{else}}<div class="muted empty-text">暂无更新执行记录</div>{{end}}
+    </div>
+    <div class="backup-list" id="subscription-node-result-list">
+      {{if .Subscription.NodeResults}}
+        {{range .Subscription.NodeResults}}
+        <div class="backup-item backup-item-compact event-item event-{{.Status}}">
+          <div>
+            <div class="backup-name">{{.URL}}</div>
+            <div class="muted">{{or .Message "-"}}{{if gt .ParsedNodes 0}} · 解析节点 {{.ParsedNodes}}{{end}}</div>
+          </div>
+          <span class="badge badge-plain {{if eq .Status "success"}}badge-ok{{else if eq .Status "ignored"}}badge-warn{{else if eq .Status "failed"}}badge-bad{{end}}">{{.Status}}</span>
+        </div>
+        {{end}}
+      {{else}}
+        <div class="muted empty-text">暂无节点订阅状态</div>
+      {{end}}
+    </div>
+
+    <div class="divider"></div>
+    <div class="mini-split-head">
+      <div>
+        <div class="section-title tight">当前活动节点来源</div>
+        <div class="section-note">这里展示当前生效配置里，由面板托管并实际写入的节点来源与命中分组。</div>
+      </div>
+    </div>
+    <div class="info-strip-grid subscription-source-grid">
+      <div class="info-pill"><span class="muted">当前模式</span><b id="subscription-source-mode">{{if .Subscription.Sources}}{{if eq .Subscription.Sources.ActiveMode "nodes_template"}}节点模板合并{{else if eq .Subscription.Sources.ActiveMode "full_config"}}完整配置订阅{{else}}待生成{{end}}{{else}}待生成{{end}}</b></div>
+      <div class="info-pill"><span class="muted">托管节点</span><b id="subscription-source-managed">{{if .Subscription.Sources}}{{.Subscription.Sources.ManagedNodeCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">手动来源</span><b id="subscription-source-manual">{{if .Subscription.Sources}}{{.Subscription.Sources.ManualNodeCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">订阅来源</span><b id="subscription-source-subscription">{{if .Subscription.Sources}}{{.Subscription.Sources.SubscriptionCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">自建节点命中</span><b id="subscription-source-selfbuilt">{{if .Subscription.Sources}}{{.Subscription.Sources.SelfBuiltCount}}{{else}}0{{end}}</b></div>
+      <div class="info-pill"><span class="muted">命中分组</span><b id="subscription-source-groups">{{if .Subscription.Sources}}{{.Subscription.Sources.MatchedGroupCount}}{{else}}0{{end}}</b></div>
+    </div>
+    <div class="backup-list" id="subscription-source-note-list">
+      {{if and .Subscription.Sources .Subscription.Sources.Notes}}
+        {{range .Subscription.Sources.Notes}}
+        <div class="backup-item backup-item-compact source-note-item"><div><div class="backup-name">{{.}}</div></div></div>
+        {{end}}
+      {{else}}
+        <div class="muted empty-text">暂无补充说明</div>
+      {{end}}
+    </div>
+    <div class="backup-list" id="subscription-source-node-list">
+      {{if and .Subscription.Sources .Subscription.Sources.Nodes}}
+        {{range .Subscription.Sources.Nodes}}
+        <div class="backup-item backup-item-compact source-node-item">
+          <div>
+            <div class="backup-name">{{.Tag}}</div>
+            <div class="muted">{{or .Type "-"}}{{if .Server}} · {{.Server}}{{end}}{{if .Groups}} · 分组 {{range $i, $g := .Groups}}{{if $i}} / {{end}}{{$g}}{{end}}{{end}}</div>
+          </div>
+          <div class="source-badges">
+            <span class="badge badge-plain {{if eq .Source "subscription"}}badge-ok{{else if eq .Source "manual"}}badge-warn{{end}}">{{if eq .Source "subscription"}}订阅节点{{else if eq .Source "manual"}}手动节点{{else}}待确认{{end}}</span>
+            {{if .SelfBuilt}}<span class="badge badge-plain source-badge-selfbuilt">自建节点</span>{{end}}
+          </div>
+        </div>
+        {{end}}
+      {{else}}
+        <div class="muted empty-text">暂无活动托管节点</div>
+      {{end}}
+    </div>
+
+    <div class="actions">
+      <button onclick="saveSub()">保存节点订阅</button>
+      <button onclick="confirmUpdateNodeSub()">立即更新节点模板订阅</button>
     </div>
   </section>
+</section>
+
+<section class="card">
+  <div class="card-title-row"><h3>手动节点入口</h3><span class="badge">Manual Nodes</span></div>
+  <div class="section-note">手动节点草稿长期保存：可反复编辑、删除、覆盖；导入应用时会与节点订阅一起 merge，不影响 Full config 订阅路径。</div>
+  <label class="field-label" for="manual-nodes-input">手动节点（每行一个 URI）</label>
+  <textarea id="manual-nodes-input" rows="8" placeholder="vless://...&#10;vmess://...&#10;trojan://...&#10;ss://...">{{.ManualNodesDraft}}</textarea>
+  <div class="actions">
+    <button onclick="saveManualNodesDraft()">保存手动节点草稿</button>
+    <button onclick="importManualNodes()">导入手动节点并应用</button>
+  </div>
+  <div class="section-note">建议两步：先“保存手动节点草稿”，确认内容后再“导入手动节点并应用”。</div>
+  <div class="status-list kv-list compact-kv" id="manual-nodes-summary-box">
+    <div><b>输入行数</b><span id="manual-summary-total">0</span></div>
+    <div><b>成功</b><span id="manual-summary-success">0</span></div>
+    <div><b>失败</b><span id="manual-summary-failed">0</span></div>
+    <div><b>忽略</b><span id="manual-summary-ignored">0</span></div>
+    <div><b>解析节点</b><span id="manual-summary-parsed">0</span></div>
+    <div><b>结果</b><span id="manual-summary-message">尚未执行</span></div>
+  </div>
+  <div class="mini-split-head" style="margin-top:10px">
+    <div>
+      <div class="section-title tight">逐行导入结果</div>
+      <div class="section-note">每行展示原始输入、状态、解析 tag/类型与错误信息。</div>
+    </div>
+  </div>
+  <div class="backup-list" id="manual-nodes-line-result-list"><div class="muted empty-text">暂无结果</div></div>
+  <div class="mini-split-head" style="margin-top:10px">
+    <div>
+      <div class="section-title tight">错误摘要</div>
+    </div>
+  </div>
+  <div class="backup-list" id="manual-nodes-error-list"><div class="muted empty-text">暂无错误</div></div>
+</section>
+
+<section class="card">
+  <div class="card-title-row"><h3>订阅历史与反馈</h3><span class="badge">History</span></div>
+  <div class="mini-split-head">
+    <div>
+      <div class="section-title tight">保存过的订阅 URL</div>
+      <div class="section-note">记录来源变更，方便核对“是不是换过订阅”。</div>
+    </div>
+    <div class="history-meta"><span class="muted">共</span> <b id="sub-history-count">{{.Subscription.HistoryCount}}</b></div>
+  </div>
+  <div class="backup-list" id="subscription-history-list">
+    {{range .History}}
+    <div class="backup-item backup-item-compact"><div><div class="backup-name">{{.URL}}</div><div class="muted">{{.Time}}</div></div></div>
+    {{else}}<div class="muted empty-text">暂无订阅历史</div>{{end}}
+  </div>
+  <div class="divider"></div>
+  <div class="mini-split-head">
+    <div>
+      <div class="section-title tight">更新执行记录</div>
+      <div class="section-note">这里看“刚才为什么成功/失败”，不用猜。</div>
+    </div>
+    <div class="history-meta"><span class="muted">共</span> <b id="sub-update-count">{{.Subscription.UpdateCount}}</b></div>
+  </div>
+  <div class="backup-list" id="subscription-update-list">
+    {{range .UpdateEvents}}
+    <div class="backup-item backup-item-compact event-item event-{{.Status}}">
+      <div>
+        <div class="backup-name">{{.Action}} · {{or .Message "-"}}</div>
+        <div class="muted">{{.Time}}{{if .URL}} · {{.URL}}{{end}}</div>
+      </div>
+      <span class="badge badge-plain {{if eq .Status "ok"}}badge-ok{{else}}badge-bad{{end}}">{{.Status}}</span>
+    </div>
+    {{else}}<div class="muted empty-text">暂无更新执行记录</div>{{end}}
+  </div>
 </section>
 {{end}}
 
@@ -81,12 +218,12 @@
     <div><b>面板当前版本</b><span id="panel-current-version">{{.PanelVersion}}</span></div>
     <div><b>本地升级候选</b><span id="panel-release-version">{{if .PanelRelease}}{{.PanelRelease.Version}}{{else}}未发现{{end}}</span></div>
   </div>
-  
+
   <div class="divider"></div>
   <div class="card-title-row"><h3>面板远程自更新</h3><span class="badge">Remote</span></div>
   <div style="margin-bottom: 12px">
-    <label class="field-label" for="remote-upgrade-url">直链下载地址 (支持 GitHub Release 的 .tar.gz 文件)</label>
-    <input id="remote-upgrade-url" placeholder="https://github.com/your/repo/releases/download/.../singdns-panel-linux-amd64.tar.gz" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
+    <label class="field-label" for="singbox-remote-upgrade-url">直链下载地址 (支持 GitHub Release 的 .tar.gz 文件)</label>
+    <input id="singbox-remote-upgrade-url" placeholder="https://github.com/your/repo/releases/download/.../singdns-panel-linux-amd64.tar.gz" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334; background: #1e293b; color: #e5eefc;">
   </div>
   <div class="actions">
     <button onclick="upgradeCore()">更新 Sing-box 核心</button>
@@ -95,6 +232,28 @@
     <button class="ghost" onclick="upgradePanel()">执行本地包升级</button>
     <button class="warn" onclick="upgradePanelRemote()">下载并升级</button>
   </div>
+
+  <div class="divider"></div>
+  <div class="card-title-row"><h3>手动上传内核</h3><span class="badge">Upload</span></div>
+  <div class="section-note">支持单文件或压缩包（.tar.gz / .tgz / .zip / .tar）。上传后会先备份当前内核，再自动校验并替换。</div>
+  <div class="actions toolbar-slim" style="align-items:center; gap:8px; flex-wrap:wrap;">
+    <input id="sb-core-upload-file" type="file" accept=".tar.gz,.tgz,.zip,.tar,.bin,.exe,*/*" style="flex:1; min-width:220px;">
+    <button onclick="uploadCoreFile(this)">上传并替换内核</button>
+  </div>
+
+  <div class="divider"></div>
+  <div class="card-title-row"><h3>IP 转发检测</h3><span class="badge">Kernel</span></div>
+  <div class="status-list kv-list">
+    <div><b>当前状态</b><span id="ip-forward-enabled">{{if .IPForwardStatus}}{{if .IPForwardStatus.Enabled}}已开启{{else}}未开启{{end}}{{else}}检测失败{{end}}</span></div>
+    <div><b>读取值</b><span id="ip-forward-value">{{if .IPForwardStatus}}{{or .IPForwardStatus.Value "-"}}{{else}}-{{end}}</span></div>
+    <div><b>检测来源</b><span id="ip-forward-source">{{if .IPForwardStatus}}{{or .IPForwardStatus.Source "-"}}{{else}}-{{end}}</span></div>
+    <div><b>说明</b><span id="ip-forward-message">{{or .IPForwardMessage "检测失败"}}</span></div>
+  </div>
+  <div class="actions toolbar-slim">
+    <button class="ghost" onclick="refreshIPForwardStatus()">重新检测 IP 转发</button>
+  </div>
+  <div class="section-note">上传替换内核成功后，页面会顺便检测当前机器是否已开启 IP 转发。若未开启，请按部署说明或系统配置自行打开 `net.ipv4.ip_forward=1`。</div>
+
   <div class="section-note" id="panel-upgrade-note">{{if .PanelRelease}}检测到本地升级包目录：{{.PanelRelease.Path}}{{else}}将发布包解压到配置的 updates 目录后，可在此检测与执行升级。{{end}}</div>
 </section>
 {{end}}
@@ -113,6 +272,126 @@
   <div class="actions">
     <button onclick="saveCron()">保存定时任务</button>
     <button class="ghost" onclick="deleteCron()">删除定时任务</button>
+  </div>
+</section>
+{{end}}
+
+{{define "monitor_cron_card"}}
+<section class="card">
+  <div class="card-title-row"><h3>节点监控自动执行</h3><span class="badge">Monitor</span></div>
+  <div class="info-strip-grid monitor-overview-grid">
+    <div class="info-pill"><span class="muted">监控模式</span><b id="monitor-mode-inline">{{or .MonitorStatus.Mode "-"}}</b></div>
+    <div class="info-pill"><span class="muted">当前默认出口</span><b id="monitor-target-inline">{{or .MonitorStatus.ActualDefaultTarget "-"}}</b></div>
+    <div class="info-pill"><span class="muted">主组最近延迟</span><b id="monitor-primary-latency-inline">{{if gt .MonitorStatus.LastPrimaryLatencyMS 0}}{{.MonitorStatus.LastPrimaryLatencyMS}}ms{{else}}-{{end}}</b></div>
+    <div class="info-pill"><span class="muted">备组最近延迟</span><b id="monitor-fallback-latency-inline">{{if gt .MonitorStatus.LastFallbackLatency 0}}{{.MonitorStatus.LastFallbackLatency}}ms{{else}}-{{end}}</b></div>
+    <div class="info-pill"><span class="muted">最近运行</span><b id="monitor-last-run-inline">{{or .MonitorStatus.LastRunAt "-"}}</b></div>
+    <div class="info-pill"><span class="muted">最近切换</span><b id="monitor-last-switch-inline">{{or .MonitorStatus.LastSwitchAt "-"}}</b></div>
+  </div>
+  <div class="status-list kv-list compact-kv monitor-status-list">
+    <div><b>自动检测切换</b><span id="monitor-enabled-inline">{{if .MonitorStatus.Enabled}}<span class="ok">已启用</span>{{else}}<span class="bad">已关闭</span>{{end}}</span></div>
+    <div><b>当前状态</b><span id="monitor-cron-enabled">{{if .MonitorCron.Enabled}}<span class="ok">已开启</span>{{else}}<span class="bad">未开启</span>{{end}}</span></div>
+    <div><b>任务信息</b><span id="monitor-cron-summary">{{if .MonitorCron.Enabled}}{{.MonitorCron.Summary}}{{else}}未开启{{end}}</span></div>
+    <div><b>主组 / 当前节点</b><span><span id="monitor-primary-inline">{{or .MonitorStatus.PrimaryGroup "-"}}</span> / <span id="monitor-primary-actual-inline">{{or .MonitorStatus.PrimaryActual "-"}}</span></span></div>
+    <div><b>备组</b><span id="monitor-fallback-inline">{{or .MonitorStatus.FallbackGroup "-"}}</span></div>
+    <div><b>当前策略说明</b><span id="monitor-strategy-summary">加载中...</span></div>
+  </div>
+  <div class="section-note">监控会按 Clash API 实时读取分组状态。这里优先用当前可用分组下拉选择，避免手填名字时因为 emoji 前缀、重命名或模板变化而配错。</div>
+  <div class="monitor-config-grid">
+    <section class="monitor-config-block">
+      <div class="section-title tight">1. 监控对象</div>
+      <div class="section-note">决定“面板接管哪个总出口”，以及主备分别是谁。默认代理组一般选 `默认代理` 这一层，而不是某个具体节点。</div>
+      <label class="field-label" for="monitor-default-proxy-group">默认代理组</label>
+      <select id="monitor-default-proxy-group"></select>
+      <div class="field-help" id="monitor-default-proxy-group-resolved">读取当前 Clash 分组后，会在这里显示解析结果。</div>
+      <label class="field-label" for="monitor-primary-group">主组</label>
+      <select id="monitor-primary-group"></select>
+      <div class="field-help" id="monitor-primary-group-resolved">建议放常用主线路，例如“香港手动”或“香日新自动”。</div>
+      <label class="field-label" for="monitor-fallback-group">备组</label>
+      <select id="monitor-fallback-group"></select>
+      <div class="field-help" id="monitor-fallback-group-resolved">主组连续异常时，会把默认代理切到这里。</div>
+      <div class="monitor-group-toolbar">
+        <div class="section-note" id="monitor-group-source">正在读取当前 Clash 分组...</div>
+        <button type="button" class="ghost" onclick="refreshMonitorGroups(true)">重新读取分组</button>
+      </div>
+      <div class="backup-list compact-list monitor-group-list" id="monitor-group-list">
+        <div class="muted empty-text">等待加载当前可选分组...</div>
+      </div>
+    </section>
+    <section class="monitor-config-block">
+      <div class="section-title tight">2. 切换策略</div>
+      <div class="section-note">这部分控制什么时候判定主组不稳、什么时候允许切到备组，以及主组恢复后要不要自动回切。</div>
+      <div class="monitor-checkbox-grid">
+        <label class="monitor-checkbox-row"><span>启用自动检测切换</span><input id="monitor-enabled" type="checkbox" {{if .MonitorConfig.Enabled}}checked{{end}}></label>
+        <label class="monitor-checkbox-row"><span>关闭组内优选</span><input id="monitor-disable-primary-optimization" type="checkbox" {{if .MonitorConfig.DisablePrimaryGroupOptimization}}checked{{end}}></label>
+        <label class="monitor-checkbox-row"><span>自动回切</span><input id="monitor-auto-failback" type="checkbox" {{if .MonitorConfig.AutoFailback}}checked{{end}}></label>
+      </div>
+      <div class="monitor-form-grid two-col">
+        <div>
+          <label class="field-label" for="monitor-primary-delay">主组最大稳定延迟</label>
+          <input id="monitor-primary-delay" type="number" min="1" value="{{.MonitorConfig.PrimaryMaxStableDelayMS}}">
+          <div class="field-help">低于这个值才认为主组健康。主组内部启用优选时，会挑选主组成员里延迟最低的节点。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-fallback-delay">备组最大稳定延迟</label>
+          <input id="monitor-fallback-delay" type="number" min="1" value="{{.MonitorConfig.FallbackMaxStableDelayMS}}">
+          <div class="field-help">主组异常时，只有备组也通过这个阈值，才会执行切换。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-fail-threshold">主组异常阈值</label>
+          <input id="monitor-fail-threshold" type="number" min="1" value="{{.MonitorConfig.FailThreshold}}">
+          <div class="field-help">连续失败多少次才真正切备组，避免一次偶发波动就切换。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-success-threshold">主组恢复阈值</label>
+          <input id="monitor-success-threshold" type="number" min="1" value="{{.MonitorConfig.SuccessThreshold}}">
+          <div class="field-help">打开自动回切后，主组要连续成功这么多次才会切回来。</div>
+        </div>
+        <div class="object-span-full">
+          <label class="field-label" for="monitor-recheck-interval">复检间隔（秒）</label>
+          <input id="monitor-recheck-interval" type="number" min="1" value="{{.MonitorConfig.RecheckIntervalSec}}">
+          <div class="field-help">同一轮检测里，重试主组或回切确认时，两次测速之间的等待时间。</div>
+        </div>
+      </div>
+      <div class="monitor-preview-box">
+        <div class="section-title tight">策略预览</div>
+        <div class="section-note" id="monitor-config-preview">保存前会在这里实时预览当前策略。</div>
+      </div>
+    </section>
+    <section class="monitor-config-block">
+      <div class="section-title tight">3. 执行方式</div>
+      <div class="section-note">这里控制监控从哪里读 Clash API、用什么测试 URL、多久执行一次，以及状态文件写到哪里。</div>
+      <label class="field-label" for="monitor-api-base">Clash API</label>
+      <input id="monitor-api-base" placeholder="http://127.0.0.1:9090" value="{{.MonitorConfig.APIBase}}">
+      <div class="field-help">通常保持本机 `127.0.0.1:9090` 即可，除非你特地改过 `external_controller`。</div>
+      <label class="field-label" for="monitor-test-url">测速 URL</label>
+      <input id="monitor-test-url" placeholder="http://www.gstatic.com/generate_204" value="{{.MonitorConfig.TestURL}}">
+      <div class="field-help">建议用返回快、无内容的 URL。这个地址只用于延迟探测，不会写入配置。</div>
+      <div class="monitor-form-grid two-col">
+        <div>
+          <label class="field-label" for="monitor-timeout-ms">超时（毫秒）</label>
+          <input id="monitor-timeout-ms" type="number" min="100" value="{{.MonitorConfig.TimeoutMS}}">
+          <div class="field-help">单次测速多久算超时。网络抖动比较大时可以适当调高。</div>
+        </div>
+        <div>
+          <label class="field-label" for="monitor-interval-minutes">定时任务间隔（分钟）</label>
+          <input id="monitor-interval-minutes" type="number" min="1" max="30" placeholder="默认 1">
+          <div class="field-help">保存监控任务时使用的执行间隔；适合 1 到 5 分钟一轮。</div>
+        </div>
+      </div>
+      <label class="field-label" for="monitor-state-file">状态文件路径</label>
+      <input id="monitor-state-file" placeholder="状态文件路径" value="{{.MonitorConfig.StateFile}}">
+      <div class="field-help">用来记录最近执行结果、切换历史和锁文件。一般保持默认即可。</div>
+      <div class="monitor-preview-box">
+        <div class="section-title tight">任务摘要</div>
+        <div class="section-note">当前定时任务：<span id="monitor-cron-summary-inline">{{if .MonitorCron.Enabled}}{{.MonitorCron.Summary}}{{else}}未开启{{end}}</span></div>
+      </div>
+    </section>
+  </div>
+  <div class="actions">
+    <button onclick="saveMonitorConfig()">保存监控策略</button>
+    <button onclick="saveMonitorCron()">保存监控任务</button>
+    <button class="ghost" onclick="runMonitorNow()">立即执行一轮</button>
+    <button class="ghost" onclick="deleteMonitorCron()">删除监控任务</button>
   </div>
 </section>
 {{end}}
@@ -150,11 +429,11 @@
   <section class="card">
     <div class="card-title-row"><h3>差异与操作说明</h3><span class="badge">只读</span></div>
     <div class="status-list kv-list compact-kv">
-      <div><b>当前预览</b><span id="backup-diff-hint">点击左侧"查看差异"后在这里预览当前配置与备份的变化。</span></div>
+      <div><b>当前预览</b><span id="backup-diff-hint">点击左侧“查看差异”后在这里预览当前配置与备份的变化。</span></div>
       <div><b>回滚影响</b><span>会先按当前逻辑重新保存配置并保留新的安全备份，然后重启 Sing-box。</span></div>
       <div><b>删除建议</b><span>确定不再需要某份历史时再删，尤其不要边看边删。</span></div>
     </div>
-    <pre id="backup-diff-preview" class="logs compact-log">点击上方"查看差异"后在这里预览</pre>
+    <pre id="backup-diff-preview" class="logs compact-log">点击上方“查看差异”后在这里预览</pre>
   </section>
 </section>
 {{end}}
@@ -175,33 +454,38 @@
 {{define "singbox_editor_card"}}
 <section class="grid two singbox-work-grid">
   <section class="card">
-    <div class="card-title-row"><h3>配置编辑器</h3><span class="badge">JSON</span></div>
-    <div class="section-note">轮询不会覆盖本地编辑。草稿会保存在浏览器本地；如果服务器配置在你编辑期间发生变化，右侧会给出冲突提示和差异预览。</div>
+    <div class="card-title-row"><h3>模版配置（可编辑）</h3><span class="badge">Template JSON</span></div>
+    <div class="section-note">这里是订阅生成用的模版配置（静态结构）。保存模版不会直接覆盖运行中的完整配置；执行“立即更新订阅”后才会基于模版 + 订阅节点 + 规则筛选生成新完整配置。现在会同时校验 JSON 格式和当前 sing-box 内核兼容性，像不支持的 inbound/outbound 类型会提前提示。</div>
+    <textarea id="template-config" class="editor">{{.TemplateConfig}}</textarea>
+    <div class="actions">
+      <button class="ghost" onclick="formatTemplateConfig()">格式化模版 JSON</button>
+      <button onclick="validateTemplateConfig()">校验模版</button>
+      <button onclick="saveTemplateConfig()">保存模版</button>
+      <a class="btn-link ghost" href="/config-center">结构化配置中心</a>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-title-row"><h3>完整配置（可编辑）</h3><span class="badge">Generated</span></div>
+    <div class="section-note">这里展示当前生效的完整配置，也支持直接修订。适合热修、小范围变更；长期结构调整仍建议优先改左侧模版或“结构化配置中心”。</div>
     <textarea id="config" class="editor">{{.Config}}</textarea>
     <div class="actions">
       <button class="ghost" onclick="formatConfig()">格式化 JSON</button>
       <button class="ghost" onclick="syncConfigFromServer()">从服务器同步</button>
       <button class="ghost" onclick="resetLocalDraft()">丢弃本地草稿</button>
-      <button onclick="validateConfig()">校验草稿</button>
+      <button onclick="validateConfig()">校验完整配置</button>
       <button onclick="saveConfig(false)">保存配置</button>
       <button onclick="saveConfig(true)">保存并重启</button>
       <button class="ghost" onclick="quickRollbackLatestBackup()">一键回滚到最新备份</button>
     </div>
-  </section>
-  <section class="card">
-    <div class="card-title-row"><h3>草稿 / 冲突 / 差异</h3><span class="badge">Draft</span></div>
     <div class="status-list kv-list compact-kv">
       <div><b>草稿状态</b><span id="config-dirty-state" class="ok">与服务器一致</span></div>
-      <div><b>本地保护</b><span id="config-draft-storage">已启用浏览器本地草稿保护</span></div>
       <div><b>冲突提示</b><span id="config-conflict-state">无</span></div>
       <div><b>服务器配置时间</b><span id="config-updated-at">{{.UpdatedAt}}</span></div>
       <div><b>服务器 JSON</b><span id="config-json-valid">{{if .ConfigStatus.ServerJSONValid}}<span class="ok">有效</span>{{else}}<span class="bad">无效</span>{{end}}</span></div>
       <div><b>服务器大小</b><span id="config-server-size">{{if .ConfigStatus}}{{.ConfigStatus.ServerBytes}} bytes / {{.ConfigStatus.ServerLines}} lines{{end}}</span></div>
-      <div><b>建议流程</b><span>改草稿 → 看右侧差异 → 校验草稿 → 保存；只有需要立即生效时再"保存并重启"。</span></div>
+      <div><b>风险级别</b><span id="config-risk-level" class="badge badge-plain">未校验</span></div>
     </div>
-    <div class="divider"></div>
-    <div class="card-title-row"><h3>校验风险提示</h3><span id="config-risk-level" class="badge badge-plain">未校验</span></div>
-    <div class="section-note" id="config-risk-summary">点击“校验草稿”后会展示关键字段变更风险。</div>
+    <div class="section-note" id="config-risk-summary">点击“校验完整配置”后，会在这里展示关键字段风险提示。</div>
     <div id="config-risk-items" class="status-list kv-list compact-kv"><div class="muted">暂无风险项</div></div>
     <div class="divider"></div>
     <div class="mini-split-head">

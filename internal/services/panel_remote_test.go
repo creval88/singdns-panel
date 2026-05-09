@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	cfgpkg "singdns-panel/internal/config"
@@ -222,4 +224,98 @@ func TestProbeRemoteRelease_BadStatus(t *testing.T) {
 	if probe.PackageStatus != http.StatusNotFound {
 		t.Fatalf("unexpected package status: %d", probe.PackageStatus)
 	}
+}
+
+func TestPanelUpgradePreflightLocalRequiresCompleteRelease(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	rel := filepath.Join(tmp, "v1.2.3")
+	if err := os.MkdirAll(filepath.Join(rel, "bin"), 0755); err != nil {
+		t.Fatalf("mkdir release: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "VERSION"), []byte("v1.2.3\n"), 0644); err != nil {
+		t.Fatalf("write version: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "bin", "singdns-panel"), []byte("binary"), 0755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+
+	svc := NewPanelService("v1.0.0", cfgpkg.PanelUpdateConfig{ReleaseDir: tmp})
+	preflight, err := svc.UpgradePreflight("local")
+	if err != nil {
+		t.Fatalf("UpgradePreflight: %v", err)
+	}
+	if preflight.OK {
+		t.Fatalf("expected preflight to fail without upgrade.sh: %#v", preflight)
+	}
+	if !preflightHasCheck(preflight, "升级脚本", false) {
+		t.Fatalf("expected failed upgrade script check: %#v", preflight.Checks)
+	}
+}
+
+func TestPanelUpgradePreflightLocalPassesCompleteRelease(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	rel := filepath.Join(tmp, "v1.2.3")
+	if err := os.MkdirAll(filepath.Join(rel, "bin"), 0755); err != nil {
+		t.Fatalf("mkdir release: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "VERSION"), []byte("v1.2.3\n"), 0644); err != nil {
+		t.Fatalf("write version: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "bin", "singdns-panel"), []byte("binary"), 0755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "upgrade.sh"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write upgrade script: %v", err)
+	}
+
+	svc := NewPanelService("v1.0.0", cfgpkg.PanelUpdateConfig{ReleaseDir: tmp})
+	preflight, err := svc.UpgradePreflight("local")
+	if err != nil {
+		t.Fatalf("UpgradePreflight: %v", err)
+	}
+	if !preflight.OK {
+		t.Fatalf("expected preflight ok, got %#v", preflight)
+	}
+}
+
+func TestUpgradeTaskStepsAreRecordedAndCloned(t *testing.T) {
+	t.Parallel()
+
+	svc := NewPanelService("v1.0.0", cfgpkg.PanelUpdateConfig{})
+	task := svc.NewTask("local", "", "")
+	svc.MarkTaskStep(task.ID, "running", "执行升级脚本", "stdout line")
+	svc.MarkTaskFailed(task.ID, os.ErrPermission)
+
+	got := svc.Task(task.ID)
+	if got == nil {
+		t.Fatal("expected task")
+	}
+	if len(got.Steps) < 3 {
+		t.Fatalf("expected task steps to be recorded, got %#v", got.Steps)
+	}
+	if got.Steps[len(got.Steps)-1].Status != "failed" {
+		t.Fatalf("expected final failed step, got %#v", got.Steps)
+	}
+	got.Steps[0].Message = "mutated"
+
+	again := svc.Task(task.ID)
+	if again.Steps[0].Message == "mutated" {
+		t.Fatalf("task clone leaked mutable steps")
+	}
+}
+
+func preflightHasCheck(preflight *PanelUpgradePreflight, name string, ok bool) bool {
+	if preflight == nil {
+		return false
+	}
+	for _, check := range preflight.Checks {
+		if check.Name == name && check.OK == ok {
+			return true
+		}
+	}
+	return false
 }

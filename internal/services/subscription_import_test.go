@@ -324,6 +324,74 @@ func TestBuildConfigFromSubscription_KeepsFullConfigProviderFieldsWhenCoreSuppor
 	}
 }
 
+func TestBuildConfigFromSubscription_RepairsMissingOutboundReferenceTypo(t *testing.T) {
+	tmp := t.TempDir()
+	binPath := filepath.Join(tmp, "sing-box")
+	script := "#!/bin/sh\nif [ \"$1\" = \"check\" ]; then\n  exit 0\nfi\nexit 0\n"
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	svc := &SingBoxService{cfg: cfgpkg.ServiceConfig{ConfigPath: filepath.Join(tmp, "config.json"), BinPath: binPath}}
+
+	fullConfig := `{
+	  "log": {"level": "info"},
+	  "outbounds": [
+	    {"tag": "🚀 默认代理", "type": "selector", "outbounds": ["♻️ 香日新故转", "♻️ 香日新自动"]},
+	    {"tag": "♻️ 香日自故转", "type": "urltest", "outbounds": ["direct"]},
+	    {"tag": "♻️ 香日新自动", "type": "urltest", "outbounds": ["direct"]},
+	    {"tag": "direct", "type": "direct"}
+	  ]
+	}`
+
+	got, summary, err := svc.BuildConfigFromSubscription("https://example.com/config.json", fullConfig)
+	if err != nil {
+		t.Fatalf("BuildConfigFromSubscription error: %v", err)
+	}
+	if summary == nil || summary.Mode != "full_config" {
+		t.Fatalf("summary = %#v, want full_config", summary)
+	}
+	if !strings.Contains(strings.Join(summary.Compatibility, "；"), "已修正 outbound 引用") {
+		t.Fatalf("expected repair note, got %#v", summary.Compatibility)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(got), &raw); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	outbounds, _ := raw["outbounds"].([]any)
+	first, _ := outbounds[0].(map[string]any)
+	list, _ := first["outbounds"].([]any)
+	if len(list) < 2 || list[0] != "♻️ 香日自故转" {
+		t.Fatalf("unexpected repaired outbounds: %#v", list)
+	}
+}
+
+func TestBuildConfigFromSubscription_RejectsUnknownOutboundReference(t *testing.T) {
+	tmp := t.TempDir()
+	binPath := filepath.Join(tmp, "sing-box")
+	script := "#!/bin/sh\nif [ \"$1\" = \"check\" ]; then\n  exit 0\nfi\nexit 0\n"
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	svc := &SingBoxService{cfg: cfgpkg.ServiceConfig{ConfigPath: filepath.Join(tmp, "config.json"), BinPath: binPath}}
+
+	fullConfig := `{
+	  "log": {"level": "info"},
+	  "outbounds": [
+	    {"tag": "🚀 默认代理", "type": "selector", "outbounds": ["完全不存在的组"]},
+	    {"tag": "direct", "type": "direct"}
+	  ]
+	}`
+
+	_, _, err := svc.BuildConfigFromSubscription("https://example.com/config.json", fullConfig)
+	if err == nil {
+		t.Fatal("expected unknown outbound reference error")
+	}
+	if !strings.Contains(err.Error(), "未定义 outbound 引用") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestClearManagedTagsState_AllowsFullConfigMode(t *testing.T) {
 	tmp := t.TempDir()
 	svc := &SingBoxService{cfg: cfgpkg.ServiceConfig{ConfigPath: filepath.Join(tmp, "config.json")}}

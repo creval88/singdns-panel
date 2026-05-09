@@ -162,6 +162,21 @@ func (a *App) SystemInstallStatusAPI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) SystemSwitchSingBoxBinaryAPI(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		respondMessage(w, err, "")
+		return
+	}
+	res, err := a.SingBox.SwitchServiceBinary(in.Path)
+	if err == nil {
+		a.Config.Services.SingBox.BinPath = a.SingBox.BinPath()
+	}
+	a.respondAudited(w, r, "system.install.singbox.switch_binary", res, err, "Sing-box 服务内核路径已切换")
+}
+
 func adviceForInstallError(err string) []string {
 	if strings.TrimSpace(err) == "" {
 		return nil
@@ -300,7 +315,7 @@ func (a *App) SystemInstallPreflightAPI(w http.ResponseWriter, r *http.Request) 
 	client := &http.Client{Timeout: 5 * time.Second}
 	tests := []string{
 		"https://raw.githubusercontent.com/", // manifest/原始内容
-		"https://github.com/",                 // release 页面
+		"https://github.com/",                // release 页面
 		"https://api.github.com/",            // API 速测
 	}
 	results := make(map[string]string)

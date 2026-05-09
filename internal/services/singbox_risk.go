@@ -23,6 +23,8 @@ func (s *SingBoxService) ConfigRiskReport(content string) (*ConfigRiskReport, er
 		_ = json.Unmarshal([]byte(oldText), &oldCfg)
 	}
 
+	oldOutboundCount := outboundCount(oldCfg)
+	newOutboundCount := outboundCount(newCfg)
 	oldOutbounds := outboundTags(oldCfg)
 	newOutbounds := outboundTags(newCfg)
 	removedTags := diffStrings(oldOutbounds, newOutbounds)
@@ -43,10 +45,10 @@ func (s *SingBoxService) ConfigRiskReport(content string) (*ConfigRiskReport, er
 		warn = append(warn, fmt.Sprintf("注意：dns.servers 数量从 %d 变为 %d", oldDNSServers, newDNSServers))
 	}
 
-	if len(newOutbounds) == 0 {
+	if newOutboundCount == 0 {
 		high = append(high, "高风险：outbounds 为空，流量将无法转发")
-	} else if len(oldOutbounds) != len(newOutbounds) {
-		warn = append(warn, fmt.Sprintf("注意：outbounds 数量从 %d 变为 %d", len(oldOutbounds), len(newOutbounds)))
+	} else if oldOutboundCount != newOutboundCount {
+		warn = append(warn, fmt.Sprintf("注意：outbounds 数量从 %d 变为 %d", oldOutboundCount, newOutboundCount))
 	}
 
 	if len(removedTags) > 0 {
@@ -127,6 +129,11 @@ func outboundTags(cfg map[string]any) []string {
 		out = append(out, tag)
 	}
 	return out
+}
+
+func outboundCount(cfg map[string]any) int {
+	arr, _ := cfg["outbounds"].([]any)
+	return len(arr)
 }
 
 func nestedString(cfg map[string]any, section, key string) string {

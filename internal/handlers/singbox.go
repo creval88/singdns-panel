@@ -422,6 +422,9 @@ func (a *App) SingBoxSubscriptionUpdateFullAPI(w http.ResponseWriter, r *http.Re
 		URL string `json:"url"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
+	if strings.TrimSpace(in.URL) == "" {
+		in.URL, _ = a.SingBox.ReadFullConfigSubscriptionURL()
+	}
 	res, err := a.SingBox.UpdateFullConfigSubscriptionFromURL(in.URL)
 	a.respondAudited(w, r, "singbox.subscription.full.update", res, err, "完整配置订阅已更新")
 }
@@ -431,6 +434,9 @@ func (a *App) SingBoxSubscriptionUpdateNodesAPI(w http.ResponseWriter, r *http.R
 		URLs []string `json:"urls"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
+	if len(in.URLs) == 0 {
+		in.URLs, _ = a.SingBox.ReadNodeSubscriptionURLs()
+	}
 	res, err := a.SingBox.UpdateNodeSubscriptionsFromURLs(in.URLs)
 	a.respondAudited(w, r, "singbox.subscription.nodes.update", res, err, "节点模板订阅已更新")
 }

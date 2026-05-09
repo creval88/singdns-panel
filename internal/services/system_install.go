@@ -12,10 +12,15 @@ import (
 )
 
 type InstallComponentStatus struct {
-	Installed bool           `json:"installed"`
-	Version   string         `json:"version"`
-	Status    *ServiceStatus `json:"status,omitempty"`
-	Detail    string         `json:"detail"`
+	Installed         bool           `json:"installed"`
+	Version           string         `json:"version"`
+	Status            *ServiceStatus `json:"status,omitempty"`
+	Detail            string         `json:"detail"`
+	ConfiguredBinary  string         `json:"configured_binary,omitempty"`
+	ServiceBinary     string         `json:"service_binary,omitempty"`
+	RunningBinary     string         `json:"running_binary,omitempty"`
+	CandidateBinaries []string       `json:"candidate_binaries,omitempty"`
+	PathConsistent    bool           `json:"path_consistent"`
 }
 
 type SystemInstallStatus struct {
@@ -82,7 +87,7 @@ func runInstallShell(timeout time.Duration, step, command string) error {
 
 func (s *SingBoxService) InstallComponentStatus() *InstallComponentStatus {
 	binPath := resolveSingBoxBinPath(s.cfg.BinPath)
-	out := &InstallComponentStatus{Installed: fileExists(binPath)}
+	out := &InstallComponentStatus{Installed: fileExists(binPath), ConfiguredBinary: strings.TrimSpace(s.cfg.BinPath)}
 	if ver, err := s.Version(); err == nil {
 		out.Version = strings.TrimSpace(ver)
 		if out.Version != "" {
@@ -92,11 +97,44 @@ func (s *SingBoxService) InstallComponentStatus() *InstallComponentStatus {
 	if st, err := s.Status(); err == nil {
 		out.Status = st
 	}
-	if out.Installed {
-		out.Detail = fmt.Sprintf("已检测到 sing-box（%s）", binPath)
-	} else {
-		out.Detail = "未检测到 sing-box"
+
+	if serviceBinary, err := s.systemd.ExecStartBinary(s.cfg.ServiceName); err == nil {
+		out.ServiceBinary = strings.TrimSpace(serviceBinary)
 	}
+	if runningBinary, err := s.runningBinaryPath(); err == nil {
+		out.RunningBinary = strings.TrimSpace(runningBinary)
+	}
+	out.CandidateBinaries = s.CandidateBinaryPaths()
+
+	pathSet := make(map[string]struct{})
+	for _, candidate := range []string{out.ConfiguredBinary, out.ServiceBinary, out.RunningBinary} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		pathSet[candidate] = struct{}{}
+	}
+	out.PathConsistent = len(pathSet) <= 1
+
+	detailParts := []string{}
+	if out.Installed {
+		detailParts = append(detailParts, fmt.Sprintf("已检测到 sing-box（%s）", binPath))
+	} else {
+		detailParts = append(detailParts, "未检测到 sing-box")
+	}
+	if out.ConfiguredBinary != "" {
+		detailParts = append(detailParts, "面板配置="+out.ConfiguredBinary)
+	}
+	if out.ServiceBinary != "" {
+		detailParts = append(detailParts, "systemd="+out.ServiceBinary)
+	}
+	if out.RunningBinary != "" {
+		detailParts = append(detailParts, "运行中="+out.RunningBinary)
+	}
+	if !out.PathConsistent {
+		detailParts = append(detailParts, "检测到内核路径不一致，请统一面板配置与 systemd 的可执行文件路径")
+	}
+	out.Detail = strings.Join(detailParts, "；")
 	return out
 }
 
@@ -275,7 +313,7 @@ if curl -fsSL "$CONFIG_UPDATE_URL" -o "$TMP_DIR/mosdns_update.zip"; then
   fi
 fi
 
-sudo chmod -R 777 "$CONFIG_PATH"
+sudo chmod -R u=rwX,go=rX "$CONFIG_PATH"
 cat <<'UNIT' | sudo tee "$SERVICE_FILE" >/dev/null
 [Unit]
 Description=MosDNS Service
@@ -308,12 +346,17 @@ sudo systemctl restart mosdns || sudo systemctl start mosdns
 }
 
 func EnsureMosDNSInstallDefaults(cfg *cfgpkg.MosDNSConfig) {
-	if cfg == nil { return }
+	if cfg == nil {
+		return
+	}
 }
 
 // 离线安装（上传包）
 func (m *MosDNSService) InstallFromUploaded(corePath, cfgZipPath, originalName string) (*OperationResult, error) {
 	// 允许 corePath 为 zip/tar/二进制；cfgZipPath 可为空
+	corePathArg := shellQuote(corePath)
+	cfgZipPathArg := shellQuote(cfgZipPath)
+	originalNameArg := shellQuote(originalName)
 	cmd := `set -e
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
@@ -329,8 +372,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 sudo mkdir -p "$BIN_PATH" "$CONFIG_PATH"
 
 # 处理核心包
-CORE_IN="` + corePath + `"
-NAME_IN="` + originalName + `"
+CORE_IN=` + corePathArg + `
+NAME_IN=` + originalNameArg + `
 case "$NAME_IN" in
   *.zip)
     unzip -oq "$CORE_IN" -d "$TMP_DIR/core_extract"
@@ -352,8 +395,9 @@ fi
 sudo install -m 755 "$SRC" "$MOSDNS_BIN"
 
 # 可选配置包
-if [ -n "` + cfgZipPath + `" ] && [ -s "` + cfgZipPath + `" ]; then
-  unzip -oq "` + cfgZipPath + `" -d "$TMP_DIR/cfg"
+CFG_IN=` + cfgZipPathArg + `
+if [ -n "$CFG_IN" ] && [ -s "$CFG_IN" ]; then
+  unzip -oq "$CFG_IN" -d "$TMP_DIR/cfg"
   if command -v rsync >/dev/null 2>&1; then
     sudo rsync -a "$TMP_DIR/cfg"/ "$CONFIG_PATH"/
   else
@@ -361,7 +405,7 @@ if [ -n "` + cfgZipPath + `" ] && [ -s "` + cfgZipPath + `" ]; then
   fi
 fi
 
-sudo chmod -R 777 "$CONFIG_PATH"
+sudo chmod -R u=rwX,go=rX "$CONFIG_PATH"
 cat <<'UNIT' | sudo tee "$SERVICE_FILE" >/dev/null
 [Unit]
 Description=MosDNS Service
