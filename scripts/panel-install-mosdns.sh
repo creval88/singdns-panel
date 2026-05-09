@@ -74,6 +74,11 @@ if curl -fsSL "$CONFIG_UPDATE_URL" -o "$TMP_DIR/mosdns_update.zip"; then
 fi
 
 chmod -R u=rwX,go=rX "$CONFIG_PATH"
+if [[ ! -s "$CONFIG_PATH/config_custom.yaml" ]]; then
+  echo "mosdns config missing: $CONFIG_PATH/config_custom.yaml" >&2
+  find "$CONFIG_PATH" -maxdepth 3 -type f | sort >&2 || true
+  exit 1
+fi
 cat > "$SERVICE_FILE" <<'UNIT'
 [Unit]
 Description=MosDNS Service
@@ -92,4 +97,14 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable mosdns
-systemctl restart mosdns || systemctl start mosdns
+if ! systemctl restart mosdns; then
+  systemctl status mosdns --no-pager -l || true
+  journalctl -u mosdns -n 120 --no-pager || true
+  exit 1
+fi
+sleep 1
+if ! systemctl is-active --quiet mosdns; then
+  systemctl status mosdns --no-pager -l || true
+  journalctl -u mosdns -n 120 --no-pager || true
+  exit 1
+fi

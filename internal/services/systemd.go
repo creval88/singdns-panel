@@ -89,11 +89,38 @@ func (s *SystemdService) Action(name, action string) (*ServiceActionResult, erro
 	default:
 		return nil, fmt.Errorf("unsupported action: %s", action)
 	}
-	_, err := utils.Run(10*time.Second, "sudo", "systemctl", action, name)
+	res, err := utils.Run(10*time.Second, "sudo", "systemctl", action, name)
 	if err != nil {
-		return nil, err
+		return nil, s.actionError(name, action, res, err)
 	}
 	return &ServiceActionResult{Service: name, Action: action, Message: fmt.Sprintf("服务 %s 已%s", name, systemActionText(action))}, nil
+}
+
+func (s *SystemdService) actionError(name, action string, res *utils.CommandResult, err error) error {
+	parts := []string{fmt.Sprintf("systemctl %s %s 失败", action, name)}
+	if err != nil {
+		parts = append(parts, err.Error())
+	}
+	if res != nil {
+		if out := strings.TrimSpace(res.Stdout); out != "" {
+			parts = append(parts, "stdout:\n"+out)
+		}
+		if stderr := strings.TrimSpace(res.Stderr); stderr != "" {
+			parts = append(parts, "stderr:\n"+stderr)
+		}
+	}
+	if status, statusErr := utils.Run(5*time.Second, "systemctl", "status", name, "--no-pager", "-l"); statusErr == nil && strings.TrimSpace(status.Stdout) != "" {
+		parts = append(parts, "status:\n"+strings.TrimSpace(status.Stdout))
+	} else if status != nil {
+		text := strings.TrimSpace(status.Stdout + "\n" + status.Stderr)
+		if text != "" {
+			parts = append(parts, "status:\n"+text)
+		}
+	}
+	if logs, logErr := s.Logs(name, 80); logErr == nil && strings.TrimSpace(logs) != "" {
+		parts = append(parts, "journal:\n"+strings.TrimSpace(logs))
+	}
+	return fmt.Errorf(strings.Join(parts, "\n\n"))
 }
 
 func (s *SystemdService) Logs(name string, lines int) (string, error) {
