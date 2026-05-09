@@ -226,7 +226,7 @@
         const e = String(err);
         if (/rsync: command not found/.test(e)) adv.push('目标机缺少 rsync：apt-get install -y rsync；或升级到带 cp -a 兜底的最新面板后重试');
         if (/fork\/exec \/usr\/bin\/sing-box: no such file or directory/.test(e)) adv.push('未找到 /usr/bin/sing-box：到系统设置→组件安装先安装 Sing-box，或在 panel.json 设置正确 BinPath');
-        if (/connect: connection refused|TLS handshake timeout|i/o timeout/.test(e)) adv.push('出网异常：检查网络/代理，或改用“离线安装”上传包');
+        if (/connect: connection refused|TLS handshake timeout|i\/o timeout/.test(e)) adv.push('出网异常：检查网络/代理，或改用“离线安装”上传包');
         if (/permission denied/.test(e)) adv.push('权限不足：检查 sudoers.singdns-panel 与运行用户权限');
         return adv;
       }
