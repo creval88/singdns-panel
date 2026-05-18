@@ -592,10 +592,19 @@ func extractLineCol(detail string) (line int, col int) {
 }
 
 func (s *SingBoxService) writeConfigFile(content string) error {
-	return s.writeManagedFile(s.cfg.ConfigPath, content)
+	prepared, err := s.prepareConfigForWrite(content)
+	if err != nil {
+		return err
+	}
+	return s.writeManagedFile(s.cfg.ConfigPath, prepared)
 }
 
 func (s *SingBoxService) SaveConfig(content string) (*OperationResult, error) {
+	prepared, err := s.prepareConfigForWrite(content)
+	if err != nil {
+		return nil, err
+	}
+	content = prepared
 	if err := s.ValidateConfig(content); err != nil {
 		return nil, err
 	}
@@ -615,6 +624,11 @@ func (s *SingBoxService) SaveConfig(content string) (*OperationResult, error) {
 }
 
 func (s *SingBoxService) saveSubscriptionConfig(content string) (*OperationResult, error) {
+	prepared, err := s.prepareConfigForWrite(content)
+	if err != nil {
+		return nil, err
+	}
+	content = prepared
 	if err := s.ValidateConfig(content); err != nil {
 		return nil, err
 	}

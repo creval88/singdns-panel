@@ -93,7 +93,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-mkdir -p "$APP_DIR/configs" "$APP_DIR/logs" "$BASE_DIR/updates"
+mkdir -p "$APP_DIR/configs" "$APP_DIR/logs" "$BASE_DIR/updates" "$BASE_DIR/data"
 useradd -r -s /usr/sbin/nologin -d "$BASE_DIR" "$RUN_USER" 2>/dev/null || true
 
 install -m 755 sbctl.sh /usr/local/bin/sbctl.sh
@@ -128,9 +128,10 @@ mkdir -p /etc/sing-box
 install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-history.log
 install -o "$RUN_USER" -g "$RUN_USER" -m 664 /dev/null /etc/sing-box/subscription-updates.log
 
-chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BASE_DIR/updates" "$BIN_PATH"
+chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BASE_DIR/updates" "$BASE_DIR/data" "$BIN_PATH"
 chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
 chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
+chmod 775 "$BASE_DIR/data" 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable "$APP_NAME"
@@ -214,9 +215,10 @@ else
 fi
 
 # 修正权限（避免 panel.json 被 root 覆盖后面板无法保存配置）
-mkdir -p "$APP_DIR/configs" "$APP_DIR/logs" "$BASE_DIR/updates"
-chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BASE_DIR/updates" "$BIN_PATH" 2>/dev/null || true
+mkdir -p "$APP_DIR/configs" "$APP_DIR/logs" "$BASE_DIR/updates" "$BASE_DIR/data"
+chown -R "$RUN_USER:$RUN_USER" "$APP_DIR" "$BASE_DIR/updates" "$BASE_DIR/data" "$BIN_PATH" 2>/dev/null || true
 chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
+chmod 775 "$BASE_DIR/data" 2>/dev/null || true
 chmod 750 "$APP_DIR/configs" 2>/dev/null || true
 chmod 640 "$APP_DIR/configs/panel.json" 2>/dev/null || true
 
@@ -238,8 +240,9 @@ systemctl is-active --quiet "$APP_NAME" || { echo "升级后服务未启动"; ex
 # 成功后取消错误回滚陷阱
 trap - ERR
 
-chown -R "$RUN_USER:$RUN_USER" "$BASE_DIR/updates" 2>/dev/null || true
+chown -R "$RUN_USER:$RUN_USER" "$BASE_DIR/updates" "$BASE_DIR/data" 2>/dev/null || true
 chmod 775 "$BASE_DIR/updates" 2>/dev/null || true
+chmod 775 "$BASE_DIR/data" 2>/dev/null || true
 
 echo "升级完成（已备份到: $BACKUP_DIR）"
 EOF

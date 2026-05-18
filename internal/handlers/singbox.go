@@ -34,6 +34,7 @@ type singboxOverviewSnapshot struct {
 	monitorCron           *svc.CronInfo
 	monitorStatus         *svc.MonitorStatus
 	monitorConfig         cfgpkg.MonitorConfig
+	monitorSwitchHistory  []svc.MonitorRunResult
 	version               string
 	latestVersion         string
 	updatedAt             string
@@ -74,6 +75,7 @@ func (a *App) singboxPageSkeleton(r *http.Request) map[string]any {
 		"MonitorCron":           monitorCron,
 		"MonitorStatus":         monitorStatus,
 		"MonitorConfig":         a.Config.Monitor,
+		"MonitorSwitchHistory":  []svc.MonitorRunResult{},
 		"Version":               "加载中...",
 		"LatestVersion":         "加载中...",
 		"UpdatedAt":             "",
@@ -95,20 +97,21 @@ func (a *App) singboxPageSkeleton(r *http.Request) map[string]any {
 
 func (a *App) collectSingboxOverview(r *http.Request) singboxOverviewSnapshot {
 	out := singboxOverviewSnapshot{
-		status:           &svc.ServiceStatus{Name: "sing-box"},
-		subscription:     &svc.SubscriptionStatus{},
-		cron:             &svc.CronInfo{},
-		monitorCron:      &svc.CronInfo{},
-		monitorStatus:    &svc.MonitorStatus{},
-		monitorConfig:    a.Config.Monitor,
-		backups:          []svc.BackupInfo{},
-		backupStatus:     &svc.BackupStatus{},
-		history:          []svc.SubscriptionHistoryItem{},
-		updateEvents:     []svc.SubscriptionUpdateEvent{},
-		configStatus:     &svc.ConfigStatus{},
-		clashAPI:         &svc.ClashAPIInfo{},
-		panelVersion:     a.Panel.CurrentVersion(),
-		ipForwardMessage: "检测失败",
+		status:               &svc.ServiceStatus{Name: "sing-box"},
+		subscription:         &svc.SubscriptionStatus{},
+		cron:                 &svc.CronInfo{},
+		monitorCron:          &svc.CronInfo{},
+		monitorStatus:        &svc.MonitorStatus{},
+		monitorConfig:        a.Config.Monitor,
+		monitorSwitchHistory: []svc.MonitorRunResult{},
+		backups:              []svc.BackupInfo{},
+		backupStatus:         &svc.BackupStatus{},
+		history:              []svc.SubscriptionHistoryItem{},
+		updateEvents:         []svc.SubscriptionUpdateEvent{},
+		configStatus:         &svc.ConfigStatus{},
+		clashAPI:             &svc.ClashAPIInfo{},
+		panelVersion:         a.Panel.CurrentVersion(),
+		ipForwardMessage:     "检测失败",
 	}
 
 	var wg sync.WaitGroup
@@ -192,11 +195,17 @@ func (a *App) collectSingboxOverview(r *http.Request) singboxOverviewSnapshot {
 	out.manualNodesLastResult, _ = a.SingBox.ReadLastManualNodesImportResult()
 	out.history, _ = a.SingBox.SubscriptionHistory()
 	out.updateEvents, _ = a.SingBox.SubscriptionUpdateEvents(12)
+	if switchHistory, err := a.Monitor.SwitchHistorySummary(); err == nil && switchHistory != nil {
+		out.monitorSwitchHistory = switchHistory.Items
+	}
 	if out.history == nil {
 		out.history = []svc.SubscriptionHistoryItem{}
 	}
 	if out.updateEvents == nil {
 		out.updateEvents = []svc.SubscriptionUpdateEvent{}
+	}
+	if out.monitorSwitchHistory == nil {
+		out.monitorSwitchHistory = []svc.MonitorRunResult{}
 	}
 
 	wg.Wait()
@@ -215,6 +224,7 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		"MonitorCron":           o.monitorCron,
 		"MonitorStatus":         o.monitorStatus,
 		"MonitorConfig":         o.monitorConfig,
+		"MonitorSwitchHistory":  o.monitorSwitchHistory,
 		"Version":               o.version,
 		"LatestVersion":         o.latestVersion,
 		"UpdatedAt":             o.updatedAt,
@@ -241,6 +251,7 @@ func (a *App) singboxOverview(r *http.Request) map[string]any {
 		"monitorCron":           o.monitorCron,
 		"monitorStatus":         o.monitorStatus,
 		"monitorConfig":         o.monitorConfig,
+		"monitorSwitchHistory":  o.monitorSwitchHistory,
 		"version":               o.version,
 		"latestVersion":         o.latestVersion,
 		"updatedAt":             o.updatedAt,
@@ -694,6 +705,87 @@ func (a *App) MonitorConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
 			in.APIBase = "http://127.0.0.1:9090"
 		}
 	}
+	in.ProbeURLs = cleanMonitorProbeURLs(in.ProbeURLs)
+	if len(in.ProbeURLs) == 0 {
+		in.ProbeURLs = cleanMonitorProbeURLs(a.Config.Monitor.ProbeURLs)
+	}
+	if len(in.ProbeURLs) == 0 {
+		in.ProbeURLs = []string{
+			"http://www.gstatic.com/generate_204",
+			"https://api.github.com/rate_limit",
+			"https://www.google.com/generate_204",
+		}
+	}
+	if in.MinProbeSuccess <= 0 {
+		in.MinProbeSuccess = minInt(2, len(in.ProbeURLs))
+	}
+	if in.MinProbeSuccess > len(in.ProbeURLs) {
+		respondMessage(w, fmt.Errorf("min_probe_success 不能大于 probe_urls 数量"), "")
+		return
+	}
+	if in.QualityScoreThreshold <= 0 {
+		in.QualityScoreThreshold = 70
+	}
+	if in.QualityScoreThreshold > 100 {
+		in.QualityScoreThreshold = 100
+	}
+	if strings.TrimSpace(in.DownloadTestURL) == "" {
+		in.DownloadTestURL = a.Config.Monitor.DownloadTestURL
+		if strings.TrimSpace(in.DownloadTestURL) == "" {
+			in.DownloadTestURL = "https://proof.ovh.net/files/100Mb.dat"
+		}
+	}
+	if in.MinDownloadKBps <= 0 {
+		in.MinDownloadKBps = 80
+	}
+	if in.VideoDayMinDownloadKBps <= 0 {
+		in.VideoDayMinDownloadKBps = maxInt(in.MinDownloadKBps, 1000)
+	}
+	if in.VideoPeakMinDownloadKBps <= 0 {
+		in.VideoPeakMinDownloadKBps = maxInt(in.VideoDayMinDownloadKBps, 3000)
+	}
+	if !validMonitorClock(in.VideoPeakStart) {
+		in.VideoPeakStart = "19:00"
+	}
+	if !validMonitorClock(in.VideoPeakEnd) {
+		in.VideoPeakEnd = "23:59"
+	}
+	if in.VideoDownloadDurationSec <= 0 {
+		in.VideoDownloadDurationSec = 10
+	}
+	if in.VideoDownloadDurationSec > 60 {
+		in.VideoDownloadDurationSec = 60
+	}
+	if in.VideoDownloadWindowSec <= 0 {
+		in.VideoDownloadWindowSec = 2
+	}
+	if in.VideoDownloadWindowSec > in.VideoDownloadDurationSec {
+		in.VideoDownloadWindowSec = in.VideoDownloadDurationSec
+	}
+	if in.VideoDownloadMaxLowWindows < 0 {
+		in.VideoDownloadMaxLowWindows = 0
+	}
+	if strings.TrimSpace(in.LocalProxyURL) == "" {
+		in.LocalProxyURL = a.Config.Monitor.LocalProxyURL
+		if strings.TrimSpace(in.LocalProxyURL) == "" {
+			in.LocalProxyURL = "socks5://127.0.0.1:7891"
+		}
+	}
+	if in.DayCheckIntervalMin <= 0 {
+		in.DayCheckIntervalMin = 5
+	}
+	if in.DayCheckIntervalMin > 60 {
+		in.DayCheckIntervalMin = 60
+	}
+	if in.PeakCheckIntervalMin <= 0 {
+		in.PeakCheckIntervalMin = 1
+	}
+	if in.PeakCheckIntervalMin > 60 {
+		in.PeakCheckIntervalMin = 60
+	}
+	if in.VideoCheckEnabled && !in.VideoDayCheckEnabled && !in.VideoPeakCheckEnabled {
+		in.VideoPeakCheckEnabled = true
+	}
 	cfg := a.Config.Monitor
 	cfg.Enabled = in.Enabled
 	cfg.APIBase = strings.TrimSpace(in.APIBase)
@@ -710,19 +802,58 @@ func (a *App) MonitorConfigSaveAPI(w http.ResponseWriter, r *http.Request) {
 	cfg.RecheckIntervalSec = in.RecheckIntervalSec
 	cfg.AutoFailback = in.AutoFailback
 	cfg.StateFile = strings.TrimSpace(in.StateFile)
+	cfg.QualityCheckEnabled = in.QualityCheckEnabled
+	cfg.ProbeURLs = in.ProbeURLs
+	cfg.MinProbeSuccess = in.MinProbeSuccess
+	cfg.QualityScoreThreshold = in.QualityScoreThreshold
+	cfg.DownloadTestURL = strings.TrimSpace(in.DownloadTestURL)
+	cfg.MinDownloadKBps = in.MinDownloadKBps
+	cfg.LocalProxyURL = strings.TrimSpace(in.LocalProxyURL)
+	cfg.DayCheckIntervalMin = in.DayCheckIntervalMin
+	cfg.PeakCheckIntervalMin = in.PeakCheckIntervalMin
+	cfg.DownloadPrecheckDisabled = in.DownloadPrecheckDisabled
+	cfg.VideoCheckEnabled = in.VideoCheckEnabled
+	cfg.VideoDayCheckEnabled = in.VideoDayCheckEnabled
+	cfg.VideoPeakCheckEnabled = in.VideoPeakCheckEnabled
+	cfg.VideoDayMinDownloadKBps = in.VideoDayMinDownloadKBps
+	cfg.VideoPeakMinDownloadKBps = in.VideoPeakMinDownloadKBps
+	cfg.VideoPeakStart = strings.TrimSpace(in.VideoPeakStart)
+	cfg.VideoPeakEnd = strings.TrimSpace(in.VideoPeakEnd)
+	cfg.VideoDownloadDurationSec = in.VideoDownloadDurationSec
+	cfg.VideoDownloadWindowSec = in.VideoDownloadWindowSec
+	cfg.VideoDownloadMaxLowWindows = in.VideoDownloadMaxLowWindows
 	a.Config.Monitor = cfg
 	if err := a.Config.Save(a.ConfigPath); err != nil {
 		respondMessage(w, err, "")
 		return
 	}
 	a.Monitor = svc.NewMonitorService(cfg, a.SingBox)
-	a.auditMessageFromRequest(r, "monitor.config.save", "节点监控策略已保存")
+	msg := "节点监控策略已保存"
+	if changed, err := a.SingBox.EnsureMonitorTestRouting(); err != nil {
+		respondMessage(w, err, "")
+		return
+	} else if changed {
+		restartResult, restartErr := a.SingBox.Action("restart")
+		if restartErr != nil {
+			respondMessage(w, restartErr, "")
+			return
+		}
+		msg += "，已注入监控专用 SOCKS 入站并重启 sing-box"
+		if restartResult != nil && strings.TrimSpace(restartResult.Message) != "" {
+			msg += "：" + strings.TrimSpace(restartResult.Message)
+		}
+	}
+	a.auditMessageFromRequest(r, "monitor.config.save", msg)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": "节点监控策略已保存", "config": cfg})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg, "config": cfg})
 }
 
 func (a *App) MonitorCronGetAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(must(a.Monitor.CronShow()))
+}
+
+func (a *App) MonitorSwitchHistoryAPI(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(must(a.Monitor.SwitchHistorySummary()))
 }
 
 func (a *App) MonitorCronSetAPI(w http.ResponseWriter, r *http.Request) {
@@ -817,6 +948,51 @@ func (a *App) SingBoxRestoreBackupAPI(w http.ResponseWriter, r *http.Request) {
 
 func must[T any](v T, _ error) T       { return v }
 func mustStr(v string, _ error) string { return v }
+
+func cleanMonitorProbeURLs(items []string) []string {
+	out := make([]string, 0, len(items))
+	seen := map[string]bool{}
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	return out
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func validMonitorClock(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "24:00" {
+		return true
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return false
+	}
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil || hour < 0 || hour > 23 {
+		return false
+	}
+	minute, err := strconv.Atoi(parts[1])
+	return err == nil && minute >= 0 && minute <= 59
+}
 
 func respondOK(w http.ResponseWriter, err error) {
 	respondMessage(w, err, "操作成功")

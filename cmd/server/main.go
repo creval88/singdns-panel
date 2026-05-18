@@ -121,7 +121,7 @@ func main() {
 			}
 			singbox := services.NewSingBoxService(cfg.Services.SingBox, systemd, cfgPath)
 			monitor := services.NewMonitorService(cfg.Monitor, singbox)
-			res, err := monitor.RunOnce()
+			res, err := monitor.RunScheduled()
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -286,6 +286,7 @@ func main() {
 		pr.Get("/api/monitor/config", app.MonitorConfigAPI)
 		pr.Post("/api/monitor/config", app.MonitorConfigSaveAPI)
 		pr.Get("/api/monitor/cron", app.MonitorCronGetAPI)
+		pr.Get("/api/monitor/switch-history", app.MonitorSwitchHistoryAPI)
 		pr.Post("/api/monitor/cron", app.MonitorCronSetAPI)
 		pr.Delete("/api/monitor/cron", app.MonitorCronDeleteAPI)
 		pr.Post("/api/monitor/run", app.MonitorRunAPI)

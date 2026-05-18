@@ -375,6 +375,11 @@ func (s *SingBoxService) SaveConfigCenterDraftDetailed(draft *ConfigCenterDraft)
 	if err != nil {
 		return nil, err
 	}
+	prepared, err := s.prepareConfigForWrite(content)
+	if err != nil {
+		return nil, err
+	}
+	content = prepared
 	if err := s.ValidateConfig(content); err != nil {
 		return nil, err
 	}

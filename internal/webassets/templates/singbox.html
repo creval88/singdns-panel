@@ -80,6 +80,7 @@ let nodeSubURLs = [];
 let nodeSubDirty = false;
 let fullSubDirty = false;
 let manualNodesDirty = false;
+let monitorConfigDirty = false;
 
 function normalizeNodeURLs(arr) {
   const out = [];
@@ -105,6 +106,9 @@ function markFullSubDirty() { fullSubDirty = true; }
 function clearFullSubDirty() { fullSubDirty = false; }
 function markManualNodesDirty() { manualNodesDirty = true; }
 function clearManualNodesDirty() { manualNodesDirty = false; }
+function markMonitorConfigDirty() { monitorConfigDirty = true; }
+function clearMonitorConfigDirty() { monitorConfigDirty = false; }
+function isMonitorConfigDirty() { return monitorConfigDirty; }
 
 function moveNodeSubscriptionURL(idx, delta) {
   const from = Number(idx);
@@ -930,6 +934,7 @@ function readMonitorForm() {
   return {
     enabled: !!document.getElementById('monitor-enabled').checked,
     disable_primary_group_optimization: !!document.getElementById('monitor-disable-primary-optimization').checked,
+    quality_check_enabled: !!document.getElementById('monitor-quality-enabled').checked,
     default_proxy_group: document.getElementById('monitor-default-proxy-group').value || '',
     primary_group: document.getElementById('monitor-primary-group').value || '',
     primary_max_stable_delay_ms: Number(document.getElementById('monitor-primary-delay').value || 150),
@@ -941,6 +946,25 @@ function readMonitorForm() {
     auto_failback: !!document.getElementById('monitor-auto-failback').checked,
     api_base: document.getElementById('monitor-api-base').value || '',
     test_url: document.getElementById('monitor-test-url').value || '',
+    probe_urls: String(document.getElementById('monitor-probe-urls').value || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean),
+    min_probe_success: Number(document.getElementById('monitor-min-probe-success').value || 2),
+    quality_score_threshold: Number(document.getElementById('monitor-quality-threshold').value || 70),
+    download_test_url: document.getElementById('monitor-download-url').value || '',
+    min_download_kbps: Number(document.getElementById('monitor-min-download-kbps').value || 80),
+    local_proxy_url: document.getElementById('monitor-local-proxy-url').value || '',
+    day_check_interval_min: Number(document.getElementById('monitor-day-interval-min').value || 5),
+    peak_check_interval_min: Number(document.getElementById('monitor-peak-interval-min').value || 1),
+    download_precheck_disabled: !document.getElementById('monitor-download-precheck-enabled').checked,
+    video_check_enabled: !!document.getElementById('monitor-video-enabled').checked,
+    video_day_check_enabled: !!document.getElementById('monitor-video-day-enabled').checked,
+    video_peak_check_enabled: !!document.getElementById('monitor-video-peak-enabled').checked,
+    video_day_min_download_kbps: Number(document.getElementById('monitor-video-day-kbps').value || 1000),
+    video_peak_min_download_kbps: Number(document.getElementById('monitor-video-peak-kbps').value || 3000),
+    video_peak_start: document.getElementById('monitor-video-peak-start').value || '19:00',
+    video_peak_end: document.getElementById('monitor-video-peak-end').value || '23:59',
+    video_download_duration_sec: Number(document.getElementById('monitor-video-duration').value || 10),
+    video_download_window_sec: Number(document.getElementById('monitor-video-window').value || 2),
+    video_download_max_low_windows: document.getElementById('monitor-video-low-windows').value === '' ? 1 : Number(document.getElementById('monitor-video-low-windows').value),
     timeout_ms: Number(document.getElementById('monitor-timeout-ms').value || 5000),
     state_file: document.getElementById('monitor-state-file').value || ''
   };
@@ -1003,8 +1027,10 @@ function refreshMonitorConfigPreview() {
   const mc = readMonitorForm();
   const preview = document.getElementById('monitor-config-preview');
   const enabledInline = document.getElementById('monitor-enabled-inline');
+  const cronInline = document.getElementById('monitor-cron-summary-inline');
   if (preview) preview.textContent = buildMonitorStrategySummary(mc);
   if (enabledInline) enabledInline.innerHTML = mc.enabled ? '<span class="ok">已启用</span>' : '<span class="bad">已关闭</span>';
+  if (cronInline && !String(cronInline.textContent || '').includes('未开启')) cronInline.textContent = buildMonitorTaskSummary(mc);
   updateMonitorResolvedHint('monitor-default-proxy-group', mc.default_proxy_group, monitorGroupCatalog);
   updateMonitorResolvedHint('monitor-primary-group', mc.primary_group, monitorGroupCatalog);
   updateMonitorResolvedHint('monitor-fallback-group', mc.fallback_group, monitorGroupCatalog);
@@ -1061,9 +1087,12 @@ async function refreshMonitorGroups(showToast = true) {
 async function saveMonitorConfig() {
   const payload = readMonitorForm();
   const j = await postJSON('/api/monitor/config', payload);
-  if (j.ok) await refreshSingboxOverview();
+  if (j.ok) {
+    clearMonitorConfigDirty();
+    await refreshSingboxOverview(true);
+  }
 }
-async function saveMonitorCron() { const interval_minutes = Number(document.getElementById('monitor-interval-minutes').value || 1); const j = await postJSON('/api/monitor/cron', {interval_minutes}); if (j.ok) await refreshSingboxOverview(); }
+async function saveMonitorCron() { const j = await postJSON('/api/monitor/cron', {interval_minutes: 1}); if (j.ok) await refreshSingboxOverview(); }
 async function deleteMonitorCron() { if (!confirm('确认删除节点监控定时任务？')) return; const j = await fetchDelete('/api/monitor/cron'); if (j.ok) await refreshSingboxOverview(); }
 async function runMonitorNow() { const j = await postJSON('/api/monitor/run'); if (j.ok) await refreshSingboxOverview(); return j; }
 
@@ -1107,6 +1136,37 @@ function renderUpdateEvents(list) {
   if (!list || !list.length) { el.innerHTML = '<div class="muted empty-text">暂无更新执行记录</div>'; return; }
   el.innerHTML = list.map(x => `<div class="backup-item backup-item-compact event-item event-${escapeHTML(x.status || 'info')}"><div><div class="backup-name">${escapeHTML(actionText(x.action))} · ${escapeHTML(x.message || '-')}</div><div class="muted">${escapeHTML(x.time || '')}${x.url ? ' · ' + escapeHTML(x.url) : ''}</div></div><span class="badge badge-plain ${(x.status === 'ok') ? 'badge-ok' : 'badge-bad'}">${escapeHTML(statusText(x.status))}</span></div>`).join('');
 }
+
+function renderMonitorSwitchHistory(list) {
+  const el = document.getElementById('monitor-switch-history-list');
+  if (!el) return;
+  if (!list || !list.length) {
+    el.innerHTML = '<div class="muted empty-text">暂无切换记录</div>';
+    return;
+  }
+  el.innerHTML = list.slice(0, 8).map(item => {
+    const target = item.switched_to || item.group || '-';
+    const action = item.action === 'optimize' ? '组内优选' : '切换';
+    return `<div class="backup-item backup-item-compact"><div><div class="backup-name">${escapeHTML(item.time || '-')} · ${escapeHTML(action)}到 ${escapeHTML(target)}</div><div class="muted">${escapeHTML(item.reason || '-')}</div></div></div>`;
+  }).join('');
+}
+
+function buildMonitorTaskSummary(mc) {
+  if (!mc) return '已开启：每 1 分钟触发，由策略决定是否完整检测';
+  const dayInterval = Number(mc.day_check_interval_min || 5);
+  const peakInterval = Number(mc.peak_check_interval_min || 1);
+  const peakStart = mc.video_peak_start || '19:00';
+  const peakEnd = mc.video_peak_end || '23:59';
+  const dayDownload = (mc.video_check_enabled && mc.video_day_check_enabled)
+    ? '下载测速开启，要求 ' + String(mc.video_day_min_download_kbps || mc.min_download_kbps || 1) + 'KB/s'
+    : '下载测速关闭';
+  const peakDownload = (mc.video_check_enabled && mc.video_peak_check_enabled)
+    ? '下载测速开启，要求 ' + String(mc.video_peak_min_download_kbps || mc.min_download_kbps || 1) + 'KB/s'
+    : '下载测速关闭';
+  const precheck = mc.download_precheck_disabled ? '异常预检关闭' : '异常预检开启';
+  return '已开启：每 1 分钟触发；白天每 ' + dayInterval + ' 分钟完整检测（' + dayDownload + '）；晚高峰 ' + peakStart + '-' + peakEnd + ' 每 ' + peakInterval + ' 分钟完整检测（' + peakDownload + '）；' + precheck;
+}
+
 function renderBackups(list, status) {
   const el = document.getElementById('backup-list');
   document.getElementById('backup-count').textContent = (list || []).length;
@@ -1126,7 +1186,15 @@ function buildMonitorStrategySummary(mc) {
   const optimization = mc.disable_primary_group_optimization ? '组内优选：关闭' : '组内优选：开启';
   const failback = mc.auto_failback ? '自动回切：开启' : '自动回切：关闭';
   const thresholds = '失败阈值：' + String(mc.fail_threshold || 1) + '，恢复阈值：' + String(mc.success_threshold || 1) + '，复检间隔：' + String(mc.recheck_interval_sec || 1) + '秒';
-  return '默认代理组 ' + defaultGroup + ' 优先走 ' + primary + '，异常时切到 ' + fallback + '，' + optimization + '，' + failback + '，' + thresholds;
+  const schedule = '完整检测间隔：白天 ' + String(mc.day_check_interval_min || 5) + ' 分钟，晚高峰 ' + String(mc.peak_check_interval_min || 1) + ' 分钟';
+  const videoPhases = '下载测速时段：白天' + (mc.video_day_check_enabled ? '开启' : '关闭') + '，晚高峰' + (mc.video_peak_check_enabled ? '开启' : '关闭') + '，异常预检' + (mc.download_precheck_disabled ? '关闭' : '开启');
+  const video = mc.video_check_enabled
+    ? '视频检测：开启，白天 >= ' + String(mc.video_day_min_download_kbps || 1000) + 'KB/s，晚高峰 ' + (mc.video_peak_start || '19:00') + '-' + (mc.video_peak_end || '23:59') + ' >= ' + String(mc.video_peak_min_download_kbps || 3000) + 'KB/s，持续 ' + String(mc.video_download_duration_sec || 10) + '秒，' + videoPhases
+    : '视频检测：关闭';
+  const quality = mc.quality_check_enabled
+    ? '质量检测：开启，至少 ' + String(mc.min_probe_success || 1) + ' 个真实访问成功，质量分 >= ' + String(mc.quality_score_threshold || 70) + '，' + video
+    : '质量检测：关闭';
+  return '默认代理组 ' + defaultGroup + ' 优先走 ' + primary + '，异常时切到 ' + fallback + '，' + optimization + '，' + failback + '，' + thresholds + '，' + schedule + '，' + quality;
 }
 
 function applyOverview(data, opts) {
@@ -1207,6 +1275,7 @@ function applyOverview(data, opts) {
     setText('monitor-cron-summary', data.monitorCron.enabled ? (data.monitorCron.summary || '已开启') : '未开启');
     setText('monitor-cron-summary-inline', data.monitorCron.enabled ? (data.monitorCron.summary || '已开启') : '未开启');
   }
+  renderMonitorSwitchHistory(data.monitorSwitchHistory || data.monitor_switch_history || []);
   if (data.monitorStatus) {
     setText('monitor-mode-inline', monitorModeText(data.monitorStatus.mode || '-'));
     setText('monitor-target-inline', data.monitorStatus.actualDefaultTarget || data.monitorStatus.actual_default_target || '-');
@@ -1215,17 +1284,27 @@ function applyOverview(data, opts) {
     setText('monitor-primary-actual-inline', data.monitorStatus.primaryActual || data.monitorStatus.primary_actual || '-');
     setText('monitor-fallback-inline', data.monitorStatus.fallbackGroup || data.monitorStatus.fallback_group || '-');
     setText('monitor-primary-latency-inline', data.monitorStatus.last_primary_latency_ms ? (String(data.monitorStatus.last_primary_latency_ms) + 'ms') : '-');
-    setText('monitor-fallback-latency-inline', data.monitorStatus.last_fallback_latency_ms ? (String(data.monitorStatus.last_fallback_latency_ms) + 'ms') : '-');
+	    setText('monitor-fallback-latency-inline', data.monitorStatus.last_fallback_latency_ms ? (String(data.monitorStatus.last_fallback_latency_ms) + 'ms') : '-');
+	    setText('monitor-primary-score-inline', data.monitorStatus.last_primary_quality_score ? String(data.monitorStatus.last_primary_quality_score) : '-');
+	    const downloadParts = [];
+	    if (data.monitorStatus.last_download_group === 'primary') downloadParts.push('主组验证');
+	    if (data.monitorStatus.last_download_group === 'fallback') downloadParts.push('当前备组');
+	    if (data.monitorStatus.last_download_kbps) downloadParts.push(String(data.monitorStatus.last_download_kbps) + 'KB/s');
+    if (data.monitorStatus.last_download_required_kbps) downloadParts.push('要求 ' + String(data.monitorStatus.last_download_required_kbps) + 'KB/s');
+    if (data.monitorStatus.last_download_phase) downloadParts.push(data.monitorStatus.last_download_phase === 'peak' ? '晚高峰' : '白天');
+    if (data.monitorStatus.last_download_windows) downloadParts.push('低速窗口 ' + String(data.monitorStatus.last_download_low_windows || 0) + '/' + String(data.monitorStatus.last_download_windows));
+    setText('monitor-download-inline', downloadParts.length ? downloadParts.join(' · ') : '-');
     setText('monitor-last-run-inline', data.monitorStatus.last_run_at || '-');
     setText('monitor-last-switch-inline', data.monitorStatus.last_switch_at || '-');
     setText('monitor-strategy-summary', data.monitorStatus.message || '监控状态加载中...');
   }
-  if (data.monitorConfig) {
+  if (data.monitorConfig && !isMonitorConfigDirty()) {
     const mc = data.monitorConfig;
     const setChecked = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
     setChecked('monitor-enabled', mc.enabled);
     setChecked('monitor-disable-primary-optimization', mc.disable_primary_group_optimization);
     setChecked('monitor-auto-failback', mc.auto_failback);
+    setChecked('monitor-quality-enabled', mc.quality_check_enabled);
     setVal('monitor-primary-delay', mc.primary_max_stable_delay_ms || 150);
     setVal('monitor-fallback-delay', mc.fallback_max_stable_delay_ms || 500);
     setVal('monitor-fail-threshold', mc.fail_threshold || 2);
@@ -1233,14 +1312,38 @@ function applyOverview(data, opts) {
     setVal('monitor-recheck-interval', mc.recheck_interval_sec || 1);
     setVal('monitor-api-base', mc.api_base || '');
     setVal('monitor-test-url', mc.test_url || '');
+    setVal('monitor-probe-urls', Array.isArray(mc.probe_urls) ? mc.probe_urls.join('\n') : '');
+    setVal('monitor-min-probe-success', mc.min_probe_success || 2);
+    setVal('monitor-quality-threshold', mc.quality_score_threshold || 70);
+    setVal('monitor-download-url', mc.download_test_url || '');
+    setVal('monitor-min-download-kbps', mc.min_download_kbps || 80);
+    setVal('monitor-local-proxy-url', mc.local_proxy_url || '');
+    setVal('monitor-day-interval-min', mc.day_check_interval_min || 5);
+    setVal('monitor-peak-interval-min', mc.peak_check_interval_min || 1);
+    setChecked('monitor-download-precheck-enabled', !mc.download_precheck_disabled);
+    setChecked('monitor-video-enabled', mc.video_check_enabled);
+    setChecked('monitor-video-day-enabled', mc.video_day_check_enabled);
+    setChecked('monitor-video-peak-enabled', mc.video_peak_check_enabled);
+    setVal('monitor-video-day-kbps', mc.video_day_min_download_kbps || 1000);
+    setVal('monitor-video-peak-kbps', mc.video_peak_min_download_kbps || 3000);
+    setVal('monitor-video-peak-start', mc.video_peak_start || '19:00');
+    setVal('monitor-video-peak-end', mc.video_peak_end || '23:59');
+    setVal('monitor-video-duration', mc.video_download_duration_sec || 10);
+    setVal('monitor-video-window', mc.video_download_window_sec || 2);
+    setVal('monitor-video-low-windows', mc.video_download_max_low_windows ?? 1);
     setVal('monitor-timeout-ms', mc.timeout_ms || 5000);
     setVal('monitor-state-file', mc.state_file || '');
     if (!(data.monitorStatus && data.monitorStatus.message)) {
       setText('monitor-strategy-summary', buildMonitorStrategySummary(mc));
     }
+    if (data.monitorCron && data.monitorCron.enabled && !(data.monitorCron.summary || '').includes('白天每')) {
+      setText('monitor-cron-summary-inline', buildMonitorTaskSummary(mc));
+    }
     renderMonitorGroupSelect('monitor-default-proxy-group', mc.default_proxy_group || '', monitorGroupCatalog, '请选择默认代理组');
     renderMonitorGroupSelect('monitor-primary-group', mc.primary_group || '', monitorGroupCatalog, '请选择主组');
     renderMonitorGroupSelect('monitor-fallback-group', mc.fallback_group || '', monitorGroupCatalog, '请选择备组');
+    refreshMonitorConfigPreview();
+  } else if (data.monitorConfig) {
     refreshMonitorConfigPreview();
   }
 
@@ -1427,6 +1530,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'monitor-enabled',
     'monitor-disable-primary-optimization',
     'monitor-auto-failback',
+    'monitor-quality-enabled',
     'monitor-default-proxy-group',
     'monitor-primary-group',
     'monitor-primary-delay',
@@ -1437,13 +1541,36 @@ document.addEventListener('DOMContentLoaded', () => {
     'monitor-recheck-interval',
     'monitor-api-base',
     'monitor-test-url',
+    'monitor-probe-urls',
+    'monitor-min-probe-success',
+    'monitor-quality-threshold',
+    'monitor-download-url',
+    'monitor-min-download-kbps',
+    'monitor-local-proxy-url',
+    'monitor-day-interval-min',
+    'monitor-peak-interval-min',
+    'monitor-download-precheck-enabled',
+    'monitor-video-enabled',
+    'monitor-video-day-enabled',
+    'monitor-video-peak-enabled',
+    'monitor-video-day-kbps',
+    'monitor-video-peak-kbps',
+    'monitor-video-peak-start',
+    'monitor-video-peak-end',
+    'monitor-video-duration',
+    'monitor-video-window',
+    'monitor-video-low-windows',
     'monitor-timeout-ms',
     'monitor-state-file'
   ].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('input', refreshMonitorConfigPreview);
-    el.addEventListener('change', refreshMonitorConfigPreview);
+    const onMonitorEdit = () => {
+      markMonitorConfigDirty();
+      refreshMonitorConfigPreview();
+    };
+    el.addEventListener('input', onMonitorEdit);
+    el.addEventListener('change', onMonitorEdit);
   });
   const configInput = getConfigEl();
   if (configInput) {

@@ -239,3 +239,68 @@
   .cc-common-quick-actions,.cc-common-member-actions,.cc-common-relation-actions,.cc-common-actions-main,.cc-common-more-actions,.cc-inline-more-actions{justify-content:flex-start}
   .cc-route-group-header{flex-direction:column}
 }
+
+/* System page mobile hardening */
+.system-page .content,
+.system-page .card,
+.system-page .stacked-sections,
+.system-page .status-list,
+.system-page .status-list>div,
+.system-page .status-list span,
+.system-page .section-note,
+.system-page .actions,
+.system-page input,
+.system-page select,
+.system-page button{
+  min-width:0;
+}
+.system-page .section-note,
+.system-page .status-list span,
+.system-page .backup-name,
+.system-page input,
+.system-page select{
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+.system-page .card{
+  overflow:hidden;
+}
+.system-page .status-list span{
+  max-width:100%;
+}
+.system-page input[type="file"]{
+  max-width:100% !important;
+}
+@media (max-width:760px){
+  .system-page .content{
+    width:100%;
+    padding:14px;
+    overflow:hidden;
+  }
+  .system-page .card{
+    padding:16px;
+  }
+  .system-page .card-title-row{
+    align-items:flex-start;
+  }
+  .system-page .actions{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:10px;
+  }
+  .system-page .actions button,
+  .system-page .actions .btn-link,
+  .system-page .status-list>div>button{
+    width:100%;
+    max-width:100%;
+    flex:none;
+  }
+  .system-page .status-list.kv-list>div{
+    grid-template-columns:1fr !important;
+    gap:6px;
+  }
+  .system-page #singbox-binary-candidates{
+    display:grid !important;
+    grid-template-columns:1fr !important;
+  }
+}

@@ -282,10 +282,12 @@
   <div class="info-strip-grid monitor-overview-grid">
     <div class="info-pill"><span class="muted">监控模式</span><b id="monitor-mode-inline">{{or .MonitorStatus.Mode "-"}}</b></div>
     <div class="info-pill"><span class="muted">当前默认出口</span><b id="monitor-target-inline">{{or .MonitorStatus.ActualDefaultTarget "-"}}</b></div>
-    <div class="info-pill"><span class="muted">主组最近延迟</span><b id="monitor-primary-latency-inline">{{if gt .MonitorStatus.LastPrimaryLatencyMS 0}}{{.MonitorStatus.LastPrimaryLatencyMS}}ms{{else}}-{{end}}</b></div>
-    <div class="info-pill"><span class="muted">备组最近延迟</span><b id="monitor-fallback-latency-inline">{{if gt .MonitorStatus.LastFallbackLatency 0}}{{.MonitorStatus.LastFallbackLatency}}ms{{else}}-{{end}}</b></div>
-    <div class="info-pill"><span class="muted">最近运行</span><b id="monitor-last-run-inline">{{or .MonitorStatus.LastRunAt "-"}}</b></div>
-    <div class="info-pill"><span class="muted">最近切换</span><b id="monitor-last-switch-inline">{{or .MonitorStatus.LastSwitchAt "-"}}</b></div>
+	    <div class="info-pill"><span class="muted">主组最近延迟</span><b id="monitor-primary-latency-inline">{{if gt .MonitorStatus.LastPrimaryLatencyMS 0}}{{.MonitorStatus.LastPrimaryLatencyMS}}ms{{else}}-{{end}}</b></div>
+	    <div class="info-pill"><span class="muted">备组最近延迟</span><b id="monitor-fallback-latency-inline">{{if gt .MonitorStatus.LastFallbackLatency 0}}{{.MonitorStatus.LastFallbackLatency}}ms{{else}}-{{end}}</b></div>
+	    <div class="info-pill"><span class="muted">主组质量分</span><b id="monitor-primary-score-inline">{{if gt .MonitorStatus.LastPrimaryScore 0}}{{.MonitorStatus.LastPrimaryScore}}{{else}}-{{end}}</b></div>
+	    <div class="info-pill"><span class="muted">最近下载</span><b id="monitor-download-inline">{{if gt .MonitorStatus.LastDownloadKBps 0}}{{if eq .MonitorStatus.LastDownloadGroup "primary"}}主组验证 {{else if eq .MonitorStatus.LastDownloadGroup "fallback"}}当前备组 {{end}}{{.MonitorStatus.LastDownloadKBps}}KB/s{{else}}-{{end}}</b></div>
+	    <div class="info-pill"><span class="muted">最近运行</span><b id="monitor-last-run-inline">{{or .MonitorStatus.LastRunAt "-"}}</b></div>
+	    <div class="info-pill"><span class="muted">最近切换</span><b id="monitor-last-switch-inline">{{or .MonitorStatus.LastSwitchAt "-"}}</b></div>
   </div>
   <div class="status-list kv-list compact-kv monitor-status-list">
     <div><b>自动检测切换</b><span id="monitor-enabled-inline">{{if .MonitorStatus.Enabled}}<span class="ok">已启用</span>{{else}}<span class="bad">已关闭</span>{{end}}</span></div>
@@ -294,6 +296,23 @@
     <div><b>主组 / 当前节点</b><span><span id="monitor-primary-inline">{{or .MonitorStatus.PrimaryGroup "-"}}</span> / <span id="monitor-primary-actual-inline">{{or .MonitorStatus.PrimaryActual "-"}}</span></span></div>
     <div><b>备组</b><span id="monitor-fallback-inline">{{or .MonitorStatus.FallbackGroup "-"}}</span></div>
     <div><b>当前策略说明</b><span id="monitor-strategy-summary">加载中...</span></div>
+  </div>
+  <div class="monitor-preview-box monitor-switch-history-box">
+    <div class="section-title tight">切换记录</div>
+    <div class="backup-list" id="monitor-switch-history-list">
+      {{if .MonitorSwitchHistory}}
+        {{range .MonitorSwitchHistory}}
+          <div class="backup-item backup-item-compact">
+            <div>
+              <div class="backup-name">{{or .Time "-"}} · {{or .SwitchedTo .Group "-"}}</div>
+              <div class="muted">{{or .Reason "-"}}</div>
+            </div>
+          </div>
+        {{end}}
+      {{else}}
+        <div class="muted empty-text">暂无切换记录</div>
+      {{end}}
+    </div>
   </div>
   <div class="section-note">监控会按 Clash API 实时读取分组状态。这里优先用当前可用分组下拉选择，避免手填名字时因为 emoji 前缀、重命名或模板变化而配错。</div>
   <div class="monitor-config-grid">
@@ -321,10 +340,11 @@
       <div class="section-title tight">2. 切换策略</div>
       <div class="section-note">这部分控制什么时候判定主组不稳、什么时候允许切到备组，以及主组恢复后要不要自动回切。</div>
       <div class="monitor-checkbox-grid">
-        <label class="monitor-checkbox-row"><span>启用自动检测切换</span><input id="monitor-enabled" type="checkbox" {{if .MonitorConfig.Enabled}}checked{{end}}></label>
-        <label class="monitor-checkbox-row"><span>关闭组内优选</span><input id="monitor-disable-primary-optimization" type="checkbox" {{if .MonitorConfig.DisablePrimaryGroupOptimization}}checked{{end}}></label>
-        <label class="monitor-checkbox-row"><span>自动回切</span><input id="monitor-auto-failback" type="checkbox" {{if .MonitorConfig.AutoFailback}}checked{{end}}></label>
-      </div>
+	        <label class="monitor-checkbox-row"><span>启用自动检测切换</span><input id="monitor-enabled" type="checkbox" {{if .MonitorConfig.Enabled}}checked{{end}}></label>
+	        <label class="monitor-checkbox-row"><span>关闭组内优选</span><input id="monitor-disable-primary-optimization" type="checkbox" {{if .MonitorConfig.DisablePrimaryGroupOptimization}}checked{{end}}></label>
+	        <label class="monitor-checkbox-row"><span>自动回切</span><input id="monitor-auto-failback" type="checkbox" {{if .MonitorConfig.AutoFailback}}checked{{end}}></label>
+	        <label class="monitor-checkbox-row"><span>启用质量检测</span><input id="monitor-quality-enabled" type="checkbox" {{if .MonitorConfig.QualityCheckEnabled}}checked{{end}}></label>
+	      </div>
       <div class="monitor-form-grid two-col">
         <div>
           <label class="field-label" for="monitor-primary-delay">主组最大稳定延迟</label>
@@ -346,12 +366,22 @@
           <input id="monitor-success-threshold" type="number" min="1" value="{{.MonitorConfig.SuccessThreshold}}">
           <div class="field-help">打开自动回切后，主组要连续成功这么多次才会切回来。</div>
         </div>
-        <div class="object-span-full">
-          <label class="field-label" for="monitor-recheck-interval">复检间隔（秒）</label>
-          <input id="monitor-recheck-interval" type="number" min="1" value="{{.MonitorConfig.RecheckIntervalSec}}">
-          <div class="field-help">同一轮检测里，重试主组或回切确认时，两次测速之间的等待时间。</div>
-        </div>
-      </div>
+	        <div class="object-span-full">
+	          <label class="field-label" for="monitor-recheck-interval">复检间隔（秒）</label>
+	          <input id="monitor-recheck-interval" type="number" min="1" value="{{.MonitorConfig.RecheckIntervalSec}}">
+	          <div class="field-help">同一轮检测里，重试主组或回切确认时，两次测速之间的等待时间。</div>
+	        </div>
+	        <div>
+	          <label class="field-label" for="monitor-min-probe-success">真实访问成功数</label>
+	          <input id="monitor-min-probe-success" type="number" min="1" value="{{.MonitorConfig.MinProbeSuccess}}">
+	          <div class="field-help">多个真实访问 URL 中至少成功多少个，才认为节点不是假健康。</div>
+	        </div>
+	        <div>
+	          <label class="field-label" for="monitor-quality-threshold">最低质量分</label>
+	          <input id="monitor-quality-threshold" type="number" min="1" max="100" value="{{.MonitorConfig.QualityScoreThreshold}}">
+	          <div class="field-help">综合延迟、访问成功率和下载速度；低于该分数会触发失败计数。</div>
+	        </div>
+	      </div>
       <div class="monitor-preview-box">
         <div class="section-title tight">策略预览</div>
         <div class="section-note" id="monitor-config-preview">保存前会在这里实时预览当前策略。</div>
@@ -363,21 +393,84 @@
       <label class="field-label" for="monitor-api-base">Clash API</label>
       <input id="monitor-api-base" placeholder="http://127.0.0.1:9090" value="{{.MonitorConfig.APIBase}}">
       <div class="field-help">通常保持本机 `127.0.0.1:9090` 即可，除非你特地改过 `external_controller`。</div>
-      <label class="field-label" for="monitor-test-url">测速 URL</label>
-      <input id="monitor-test-url" placeholder="http://www.gstatic.com/generate_204" value="{{.MonitorConfig.TestURL}}">
-      <div class="field-help">建议用返回快、无内容的 URL。这个地址只用于延迟探测，不会写入配置。</div>
-      <div class="monitor-form-grid two-col">
-        <div>
-          <label class="field-label" for="monitor-timeout-ms">超时（毫秒）</label>
-          <input id="monitor-timeout-ms" type="number" min="100" value="{{.MonitorConfig.TimeoutMS}}">
-          <div class="field-help">单次测速多久算超时。网络抖动比较大时可以适当调高。</div>
-        </div>
-        <div>
-          <label class="field-label" for="monitor-interval-minutes">定时任务间隔（分钟）</label>
-          <input id="monitor-interval-minutes" type="number" min="1" max="30" placeholder="默认 1">
-          <div class="field-help">保存监控任务时使用的执行间隔；适合 1 到 5 分钟一轮。</div>
-        </div>
-      </div>
+	      <label class="field-label" for="monitor-test-url">测速 URL</label>
+	      <input id="monitor-test-url" placeholder="http://www.gstatic.com/generate_204" value="{{.MonitorConfig.TestURL}}">
+	      <div class="field-help">建议用返回快、无内容的 URL。这个地址只用于延迟探测，不会写入配置。</div>
+	      <label class="field-label" for="monitor-probe-urls">真实访问 URL</label>
+	      <textarea id="monitor-probe-urls" rows="4" placeholder="每行一个 URL">{{range .MonitorConfig.ProbeURLs}}{{.}}
+{{end}}</textarea>
+	      <div class="field-help">质量检测会逐个 URL 探测，避免单一 204 正常但常用网站实际不可用。</div>
+		      <label class="field-label" for="monitor-download-url">持续下载 URL</label>
+		      <input id="monitor-download-url" placeholder="https://proof.ovh.net/files/100Mb.dat" value="{{.MonitorConfig.DownloadTestURL}}">
+		      <div class="field-help">当前正在使用的出口会通过本机代理持续下载，用来识别低延迟但晚高峰速度不够的节点。</div>
+		      <div class="monitor-checkbox-grid">
+		        <label class="monitor-checkbox-row"><span>启用视频/持续吞吐检测</span><input id="monitor-video-enabled" type="checkbox" {{if .MonitorConfig.VideoCheckEnabled}}checked{{end}}></label>
+		        <label class="monitor-checkbox-row"><span>白天执行下载测速</span><input id="monitor-video-day-enabled" type="checkbox" {{if .MonitorConfig.VideoDayCheckEnabled}}checked{{end}}></label>
+		        <label class="monitor-checkbox-row"><span>晚高峰执行下载测速</span><input id="monitor-video-peak-enabled" type="checkbox" {{if .MonitorConfig.VideoPeakCheckEnabled}}checked{{end}}></label>
+		        <label class="monitor-checkbox-row"><span>延迟/访问异常时跳过下载测速</span><input id="monitor-download-precheck-enabled" type="checkbox" {{if not .MonitorConfig.DownloadPrecheckDisabled}}checked{{end}}></label>
+		      </div>
+		      <div class="monitor-form-grid two-col">
+		        <div>
+		          <label class="field-label" for="monitor-timeout-ms">超时（毫秒）</label>
+		          <input id="monitor-timeout-ms" type="number" min="100" value="{{.MonitorConfig.TimeoutMS}}">
+		          <div class="field-help">单次测速多久算超时。网络抖动比较大时可以适当调高。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-min-download-kbps">兼容最低下载速度</label>
+		          <input id="monitor-min-download-kbps" type="number" min="1" value="{{.MonitorConfig.MinDownloadKBps}}">
+		          <div class="field-help">旧配置兼容阈值。开启视频检测后，优先使用下面的白天/晚高峰阈值。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-video-day-kbps">白天最低持续速度</label>
+		          <input id="monitor-video-day-kbps" type="number" min="1" value="{{.MonitorConfig.VideoDayMinDownloadKBps}}">
+		          <div class="field-help">非晚高峰时使用。建议 1080p 填 1000KB/s，普通可用可低一些。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-video-peak-kbps">晚高峰最低持续速度</label>
+		          <input id="monitor-video-peak-kbps" type="number" min="1" value="{{.MonitorConfig.VideoPeakMinDownloadKBps}}">
+		          <div class="field-help">晚高峰看 4K 建议 2500-3000KB/s 以上。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-video-peak-start">晚高峰开始</label>
+		          <input id="monitor-video-peak-start" type="time" value="{{.MonitorConfig.VideoPeakStart}}">
+		          <div class="field-help">按测试机本地时间判断。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-video-peak-end">晚高峰结束</label>
+		          <input id="monitor-video-peak-end" type="time" value="{{.MonitorConfig.VideoPeakEnd}}">
+		          <div class="field-help">可跨午夜；例如 19:00 到 01:00。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-video-duration">下载测试时长（秒）</label>
+		          <input id="monitor-video-duration" type="number" min="1" max="60" value="{{.MonitorConfig.VideoDownloadDurationSec}}">
+		          <div class="field-help">建议 10-15 秒，越长越接近真实视频体验。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-video-window">速度窗口（秒）</label>
+		          <input id="monitor-video-window" type="number" min="1" max="30" value="{{.MonitorConfig.VideoDownloadWindowSec}}">
+		          <div class="field-help">每个窗口单独判断是否低速，建议 2 秒。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-video-low-windows">容忍低速窗口</label>
+		          <input id="monitor-video-low-windows" type="number" min="0" value="{{.MonitorConfig.VideoDownloadMaxLowWindows}}">
+		          <div class="field-help">超过这个数量就判定视频能力不稳定。</div>
+		        </div>
+		        <div>
+		          <label class="field-label" for="monitor-day-interval-min">白天完整检测间隔（分钟）</label>
+	          <input id="monitor-day-interval-min" type="number" min="1" max="60" value="{{.MonitorConfig.DayCheckIntervalMin}}">
+	          <div class="field-help">后台每分钟触发一次，但白天只有到这个间隔才真正执行完整检测。建议 3-5 分钟。</div>
+	        </div>
+		        <div>
+		          <label class="field-label" for="monitor-peak-interval-min">晚高峰完整检测间隔（分钟）</label>
+	          <input id="monitor-peak-interval-min" type="number" min="1" max="60" value="{{.MonitorConfig.PeakCheckIntervalMin}}">
+	          <div class="field-help">晚高峰对 4K 可用性更敏感，建议 1 分钟。</div>
+	        </div>
+	        <div>
+	          <label class="field-label" for="monitor-local-proxy-url">本机代理</label>
+	          <input id="monitor-local-proxy-url" placeholder="socks5://127.0.0.1:7891" value="{{.MonitorConfig.LocalProxyURL}}">
+		          <div class="field-help">兼容备用；主组/备组测速会优先使用面板自动注入的 127.0.0.1:7892 / 7893 专用入口。</div>
+	        </div>
+	      </div>
       <label class="field-label" for="monitor-state-file">状态文件路径</label>
       <input id="monitor-state-file" placeholder="状态文件路径" value="{{.MonitorConfig.StateFile}}">
       <div class="field-help">用来记录最近执行结果、切换历史和锁文件。一般保持默认即可。</div>
